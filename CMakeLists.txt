@@ -8,7 +8,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 # Options
 option(BUILD_TESTS "Build tests" ON)
-option(BUILD_PYTHON_BINDINGS "Build Python bindings" ON)
+option(BUILD_PYTHON_BINDINGS "Build Python bindings" OFF)
 option(BUILD_SHARED_LIBS "Build shared libraries" ON)
 option(ENABLE_OPENMP "Enable OpenMP support" ON)
 
