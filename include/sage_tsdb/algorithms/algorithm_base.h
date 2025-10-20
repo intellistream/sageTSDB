@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../core/time_series_data.h"
+#include <functional>
 #include <map>
 #include <memory>
 #include <string>
@@ -108,8 +109,8 @@ public:
     
     std::vector<std::string> list_algorithms() const {
         std::vector<std::string> names;
-        for (const auto& pair : creators_) {
-            names.push_back(pair.first);
+        for (const auto& [key, value] : creators_) {
+            names.push_back(key);
         }
         return names;
     }

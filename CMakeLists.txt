@@ -8,7 +8,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 # Options
 option(BUILD_TESTS "Build tests" ON)
-option(BUILD_PYTHON_BINDINGS "Build Python bindings" ON)
+option(BUILD_PYTHON_BINDINGS "Build Python bindings" OFF)
 option(BUILD_SHARED_LIBS "Build shared libraries" ON)
 option(ENABLE_OPENMP "Enable OpenMP support" ON)
 
@@ -36,21 +36,15 @@ include_directories(
     ${PROJECT_SOURCE_DIR}/src
 )
 
-# Source files
-set(SAGE_TSDB_SOURCES
+# Core library
+add_library(sage_tsdb_core
     src/core/time_series_data.cpp
     src/core/time_series_index.cpp
     src/core/time_series_db.cpp
-    src/algorithms/algorithm_base.cpp
-    src/algorithms/stream_join.cpp
-    src/algorithms/window_aggregator.cpp
     src/utils/config.cpp
 )
 
-# Create library
-add_library(sage_tsdb ${SAGE_TSDB_SOURCES})
-
-target_include_directories(sage_tsdb
+target_include_directories(sage_tsdb_core
     PUBLIC
         $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
         $<INSTALL_INTERFACE:include>
@@ -58,13 +52,40 @@ target_include_directories(sage_tsdb
         ${PROJECT_SOURCE_DIR}/src
 )
 
+# Algorithms library
+add_library(sage_tsdb_algorithms
+    src/algorithms/stream_join.cpp
+    src/algorithms/window_aggregator.cpp
+)
+
+target_include_directories(sage_tsdb_algorithms
+    PUBLIC
+        $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
+        $<INSTALL_INTERFACE:include>
+    PRIVATE
+        ${PROJECT_SOURCE_DIR}/src
+)
+
+target_link_libraries(sage_tsdb_algorithms
+    PUBLIC
+        sage_tsdb_core
+)
+
+# Main library (combines all)
+add_library(sage_tsdb INTERFACE)
+target_link_libraries(sage_tsdb
+    INTERFACE
+        sage_tsdb_core
+        sage_tsdb_algorithms
+)
+
 # Link OpenMP if available
 if(OpenMP_CXX_FOUND)
-    target_link_libraries(sage_tsdb PUBLIC OpenMP::OpenMP_CXX)
+    target_link_libraries(sage_tsdb_core PUBLIC OpenMP::OpenMP_CXX)
 endif()
 
 # Install targets
-install(TARGETS sage_tsdb
+install(TARGETS sage_tsdb sage_tsdb_core sage_tsdb_algorithms
     EXPORT sageTSDBTargets
     LIBRARY DESTINATION lib
     ARCHIVE DESTINATION lib

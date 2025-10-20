@@ -1,0 +1,33 @@
+# Build directories
+build/
+cmake-build-debug/
+cmake-build-release/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Generated files
+*.o
+*.a
+*.lib
+*.dll
+*.dylib
+*.exe
+CMakeFiles/
