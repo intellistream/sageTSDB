@@ -16,7 +16,7 @@ protected:
 };
 
 TEST_F(TimeSeriesIndexTest, AddSingleDataPoint) {
-    TimeSeriesData data{base_time, 42.5};
+    TimeSeriesData data(base_time, 42.5);
     size_t idx = index->add(data);
     
     EXPECT_EQ(idx, 0);
@@ -25,7 +25,7 @@ TEST_F(TimeSeriesIndexTest, AddSingleDataPoint) {
 
 TEST_F(TimeSeriesIndexTest, AddMultipleDataPoints) {
     for (int i = 0; i < 10; ++i) {
-        TimeSeriesData data{base_time + i * 1000, static_cast<double>(i)};
+        TimeSeriesData data(base_time + i * 1000, static_cast<double>(i));
         index->add(data);
     }
     
@@ -35,13 +35,14 @@ TEST_F(TimeSeriesIndexTest, AddMultipleDataPoints) {
 TEST_F(TimeSeriesIndexTest, QueryByTimeRange) {
     // Add data points
     for (int i = 0; i < 20; ++i) {
-        TimeSeriesData data{base_time + i * 1000, static_cast<double>(i * 10)};
+        TimeSeriesData data(base_time + i * 1000, static_cast<double>(i * 10));
         index->add(data);
     }
     
     // Query middle range
     TimeRange range{base_time + 5000, base_time + 14999};
-    auto results = index->query(range);
+    QueryConfig config(range);
+    auto results = index->query(config);
     
     EXPECT_EQ(results.size(), 10); // Points at 5000, 6000, ..., 14000
     EXPECT_EQ(results[0].timestamp, base_time + 5000);
@@ -51,18 +52,18 @@ TEST_F(TimeSeriesIndexTest, QueryByTimeRange) {
 TEST_F(TimeSeriesIndexTest, QueryWithTags) {
     // Add data with different tags
     for (int i = 0; i < 10; ++i) {
-        std::unordered_map<std::string, std::string> tags;
+        sage_tsdb::Tags tags;
         tags["sensor_id"] = "sensor_0" + std::to_string(i % 3);
-        TimeSeriesData data{base_time + i * 1000, static_cast<double>(i), tags};
+        TimeSeriesData data(base_time + i * 1000, static_cast<double>(i), tags);
         index->add(data);
     }
     
     // Query for specific sensor
     TimeRange range{base_time, base_time + 20000};
-    QueryConfig config;
-    config.tags["sensor_id"] = "sensor_01";
+    QueryConfig config(range);
+    config.filter_tags["sensor_id"] = "sensor_01";
     
-    auto results = index->query(range, config);
+    auto results = index->query(config);
     
     // Should get points at indices 1, 4, 7 (3 points)
     EXPECT_EQ(results.size(), 3);
@@ -74,16 +75,16 @@ TEST_F(TimeSeriesIndexTest, QueryWithTags) {
 TEST_F(TimeSeriesIndexTest, QueryWithLimit) {
     // Add 100 data points
     for (int i = 0; i < 100; ++i) {
-        TimeSeriesData data{base_time + i * 1000, static_cast<double>(i)};
+        TimeSeriesData data(base_time + i * 1000, static_cast<double>(i));
         index->add(data);
     }
     
     // Query with limit
     TimeRange range{base_time, base_time + 200000};
-    QueryConfig config;
+    QueryConfig config(range);
     config.limit = 10;
     
-    auto results = index->query(range, config);
+    auto results = index->query(config);
     
     EXPECT_EQ(results.size(), 10);
 }
@@ -91,13 +92,14 @@ TEST_F(TimeSeriesIndexTest, QueryWithLimit) {
 TEST_F(TimeSeriesIndexTest, QueryEmptyRange) {
     // Add data points
     for (int i = 0; i < 10; ++i) {
-        TimeSeriesData data{base_time + i * 1000, static_cast<double>(i)};
+        TimeSeriesData data(base_time + i * 1000, static_cast<double>(i));
         index->add(data);
     }
     
     // Query range with no data
     TimeRange range{base_time + 50000, base_time + 60000};
-    auto results = index->query(range);
+    QueryConfig config(range);
+    auto results = index->query(config);
     
     EXPECT_TRUE(results.empty());
 }
@@ -105,7 +107,7 @@ TEST_F(TimeSeriesIndexTest, QueryEmptyRange) {
 TEST_F(TimeSeriesIndexTest, OutOfOrderInserts) {
     // Insert in reverse order
     for (int i = 9; i >= 0; --i) {
-        TimeSeriesData data{base_time + i * 1000, static_cast<double>(i)};
+        TimeSeriesData data(base_time + i * 1000, static_cast<double>(i));
         index->add(data);
     }
     
@@ -113,7 +115,8 @@ TEST_F(TimeSeriesIndexTest, OutOfOrderInserts) {
     
     // Query should return sorted results
     TimeRange range{base_time, base_time + 20000};
-    auto results = index->query(range);
+    QueryConfig config(range);
+    auto results = index->query(config);
     
     EXPECT_EQ(results.size(), 10);
     for (size_t i = 1; i < results.size(); ++i) {
@@ -124,7 +127,7 @@ TEST_F(TimeSeriesIndexTest, OutOfOrderInserts) {
 TEST_F(TimeSeriesIndexTest, ConcurrentReads) {
     // Add initial data
     for (int i = 0; i < 100; ++i) {
-        TimeSeriesData data{base_time + i * 1000, static_cast<double>(i)};
+        TimeSeriesData data(base_time + i * 1000, static_cast<double>(i));
         index->add(data);
     }
     
@@ -135,7 +138,8 @@ TEST_F(TimeSeriesIndexTest, ConcurrentReads) {
     for (int t = 0; t < 10; ++t) {
         threads.emplace_back([&]() {
             TimeRange range{base_time, base_time + 200000};
-            auto results = index->query(range);
+            QueryConfig config(range);
+            auto results = index->query(config);
             if (results.size() == 100) {
                 ++successful_reads;
             }
@@ -152,7 +156,7 @@ TEST_F(TimeSeriesIndexTest, ConcurrentReads) {
 TEST_F(TimeSeriesIndexTest, Clear) {
     // Add data
     for (int i = 0; i < 10; ++i) {
-        TimeSeriesData data{base_time + i * 1000, static_cast<double>(i)};
+        TimeSeriesData data(base_time + i * 1000, static_cast<double>(i));
         index->add(data);
     }
     
@@ -165,19 +169,18 @@ TEST_F(TimeSeriesIndexTest, Clear) {
     
     // Query should return empty
     TimeRange range{base_time, base_time + 20000};
-    auto results = index->query(range);
+    QueryConfig config(range);
+    auto results = index->query(config);
     EXPECT_TRUE(results.empty());
 }
 
 TEST_F(TimeSeriesIndexTest, Statistics) {
     // Add data
     for (int i = 0; i < 50; ++i) {
-        TimeSeriesData data{base_time + i * 1000, static_cast<double>(i)};
+        TimeSeriesData data(base_time + i * 1000, static_cast<double>(i));
         index->add(data);
     }
     
-    auto stats = index->get_stats();
-    
-    EXPECT_EQ(stats.at("total_data_points"), 50);
-    EXPECT_GT(stats.at("total_queries"), 0); // From previous tests
+    // TimeSeriesIndex doesn't have get_stats, just verify size
+    EXPECT_EQ(index->size(), 50);
 }

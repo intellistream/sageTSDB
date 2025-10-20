@@ -1,7 +1,9 @@
 #pragma once
 
+#include <cctype>
 #include <cstdint>
 #include <map>
+#include <stdexcept>
 #include <string>
 #include <variant>
 #include <vector>
@@ -104,14 +106,15 @@ struct TimeRange {
  * @brief Aggregation types for time series
  */
 enum class AggregationType {
-    SUM,
-    AVG,
-    MIN,
-    MAX,
-    COUNT,
-    FIRST,
-    LAST,
-    STDDEV
+    NONE = -1,
+    SUM = 0,
+    AVG = 1,
+    MIN = 2,
+    MAX = 3,
+    COUNT = 4,
+    FIRST = 5,
+    LAST = 6,
+    STDDEV = 7
 };
 
 /**
@@ -120,9 +123,9 @@ enum class AggregationType {
 struct QueryConfig {
     TimeRange time_range;
     Tags filter_tags;
-    AggregationType aggregation = AggregationType::AVG;
+    AggregationType aggregation = AggregationType::NONE;
     int64_t window_size = 0;  // milliseconds, 0 means no windowing
-    int32_t limit = -1;       // -1 means no limit
+    int32_t limit = 1000;     // default limit
     
     QueryConfig() = default;
     
@@ -132,5 +135,46 @@ struct QueryConfig {
     QueryConfig(const TimeRange& range, const Tags& tags)
         : time_range(range), filter_tags(tags) {}
 };
+
+/**
+ * @brief Convert aggregation type to string
+ */
+inline std::string aggregation_to_string(AggregationType type) {
+    switch (type) {
+        case AggregationType::SUM: return "sum";
+        case AggregationType::AVG: return "avg";
+        case AggregationType::MIN: return "min";
+        case AggregationType::MAX: return "max";
+        case AggregationType::COUNT: return "count";
+        case AggregationType::FIRST: return "first";
+        case AggregationType::LAST: return "last";
+        case AggregationType::STDDEV: return "stddev";
+        case AggregationType::NONE: return "none";
+        default: return "unknown";
+    }
+}
+
+/**
+ * @brief Convert string to aggregation type
+ */
+inline AggregationType string_to_aggregation(const std::string& str) {
+    std::string lower = str;
+    // Convert to lowercase
+    for (auto& c : lower) {
+        c = std::tolower(c);
+    }
+    
+    if (lower == "sum") return AggregationType::SUM;
+    if (lower == "avg") return AggregationType::AVG;
+    if (lower == "min") return AggregationType::MIN;
+    if (lower == "max") return AggregationType::MAX;
+    if (lower == "count") return AggregationType::COUNT;
+    if (lower == "first") return AggregationType::FIRST;
+    if (lower == "last") return AggregationType::LAST;
+    if (lower == "stddev") return AggregationType::STDDEV;
+    if (lower == "none") return AggregationType::NONE;
+    
+    throw std::invalid_argument("Unknown aggregation type: " + str);
+}
 
 } // namespace sage_tsdb

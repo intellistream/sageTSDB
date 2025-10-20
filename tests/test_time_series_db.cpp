@@ -17,7 +17,7 @@ protected:
 TEST_F(TimeSeriesDBTest, AddAndQuery) {
     // Add data points
     for (int i = 0; i < 10; ++i) {
-        std::unordered_map<std::string, std::string> tags = {
+        sage_tsdb::Tags tags = {
             {"sensor_id", "sensor_01"}
         };
         size_t idx = db->add(base_time + i * 1000, static_cast<double>(i * 10), tags);
@@ -26,7 +26,8 @@ TEST_F(TimeSeriesDBTest, AddAndQuery) {
     
     // Query
     TimeRange range{base_time, base_time + 20000};
-    auto results = db->query(range);
+    QueryConfig config(range);
+    auto results = db->query(config);
     
     EXPECT_EQ(results.size(), 10);
 }
@@ -34,7 +35,7 @@ TEST_F(TimeSeriesDBTest, AddAndQuery) {
 TEST_F(TimeSeriesDBTest, QueryWithTagFilter) {
     // Add data with different sensors
     for (int i = 0; i < 20; ++i) {
-        std::unordered_map<std::string, std::string> tags = {
+        sage_tsdb::Tags tags = {
             {"sensor_id", i % 2 == 0 ? "sensor_01" : "sensor_02"}
         };
         db->add(base_time + i * 1000, static_cast<double>(i), tags);
@@ -42,10 +43,10 @@ TEST_F(TimeSeriesDBTest, QueryWithTagFilter) {
     
     // Query for sensor_01 only
     TimeRange range{base_time, base_time + 30000};
-    QueryConfig config;
-    config.tags["sensor_id"] = "sensor_01";
+    QueryConfig config(range);
+    config.filter_tags["sensor_id"] = "sensor_01";
     
-    auto results = db->query(range, config);
+    auto results = db->query(config);
     
     EXPECT_EQ(results.size(), 10);
     for (const auto& result : results) {
@@ -56,7 +57,7 @@ TEST_F(TimeSeriesDBTest, QueryWithTagFilter) {
 TEST_F(TimeSeriesDBTest, MultipleTagFilters) {
     // Add data with multiple tags
     for (int i = 0; i < 20; ++i) {
-        std::unordered_map<std::string, std::string> tags = {
+        sage_tsdb::Tags tags = {
             {"sensor_id", i % 2 == 0 ? "sensor_01" : "sensor_02"},
             {"location", i % 4 < 2 ? "room_A" : "room_B"}
         };
@@ -65,11 +66,11 @@ TEST_F(TimeSeriesDBTest, MultipleTagFilters) {
     
     // Query for sensor_01 in room_A
     TimeRange range{base_time, base_time + 30000};
-    QueryConfig config;
-    config.tags["sensor_id"] = "sensor_01";
-    config.tags["location"] = "room_A";
+    QueryConfig config(range);
+    config.filter_tags["sensor_id"] = "sensor_01";
+    config.filter_tags["location"] = "room_A";
     
-    auto results = db->query(range, config);
+    auto results = db->query(config);
     
     // Should get 5 results (indices 0, 4, 8, 12, 16)
     EXPECT_EQ(results.size(), 5);

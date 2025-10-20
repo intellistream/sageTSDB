@@ -54,7 +54,6 @@ target_include_directories(sage_tsdb_core
 
 # Algorithms library
 add_library(sage_tsdb_algorithms
-    src/algorithms/algorithm_base.cpp
     src/algorithms/stream_join.cpp
     src/algorithms/window_aggregator.cpp
 )
