@@ -1,6 +1,7 @@
 #include "sage_tsdb/core/time_series_index.h"
 #include <algorithm>
 #include <set>
+#include <mutex>
 
 namespace sage_tsdb {
 
