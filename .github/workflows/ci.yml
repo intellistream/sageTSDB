@@ -54,7 +54,9 @@ jobs:
             -DCMAKE_CXX_STANDARD=17
 
       - name: Build
-        run: cmake --build build --config ${{ matrix.build_type }} -j $(nproc 2>/dev/null || sysctl -n hw.ncpu)
+        run: |
+          NPROC=$(nproc 2>/dev/null || sysctl -n hw.ncpu)
+          cmake --build build --config ${{ matrix.build_type }} -j $NPROC
 
       - name: Run Tests
         working-directory: build
