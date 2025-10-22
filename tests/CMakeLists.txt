@@ -70,6 +70,16 @@ target_link_libraries(test_window_aggregator
     test_utils
 )
 
+add_executable(test_storage_engine
+  test_storage_engine.cpp
+)
+target_link_libraries(test_storage_engine
+  PRIVATE
+    sage_tsdb_core
+    GTest::gtest_main
+    test_utils
+)
+
 # Register tests with CTest
 include(GoogleTest)
 gtest_discover_tests(test_time_series_data)
@@ -77,3 +87,4 @@ gtest_discover_tests(test_time_series_index)
 gtest_discover_tests(test_time_series_db)
 gtest_discover_tests(test_stream_join)
 gtest_discover_tests(test_window_aggregator)
+gtest_discover_tests(test_storage_engine)

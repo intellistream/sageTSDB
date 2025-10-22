@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 #include "sage_tsdb/core/time_series_db.h"
+#include "sage_tsdb/core/storage_engine.h"
 
 using namespace sage_tsdb;
 

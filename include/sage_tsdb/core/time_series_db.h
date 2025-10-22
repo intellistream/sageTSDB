@@ -130,6 +130,75 @@ public:
      * @return Statistics map
      */
     std::map<std::string, int64_t> get_stats() const;
+    
+    // ========== Persistence Methods ==========
+    
+    /**
+     * @brief Save all data to disk
+     * @param file_path Path to save file
+     * @return true if successful
+     */
+    bool save_to_disk(const std::string& file_path);
+    
+    /**
+     * @brief Load data from disk
+     * @param file_path Path to load file
+     * @param clear_existing If true, clears existing data before loading
+     * @return true if successful
+     */
+    bool load_from_disk(const std::string& file_path, bool clear_existing = true);
+    
+    /**
+     * @brief Create a checkpoint of current data
+     * @param checkpoint_id Checkpoint identifier
+     * @return true if successful
+     */
+    bool create_checkpoint(uint64_t checkpoint_id);
+    
+    /**
+     * @brief Restore data from a checkpoint
+     * @param checkpoint_id Checkpoint identifier to restore
+     * @param clear_existing If true, clears existing data before restoring
+     * @return true if successful
+     */
+    bool restore_from_checkpoint(uint64_t checkpoint_id, bool clear_existing = true);
+    
+    /**
+     * @brief List all available checkpoints
+     * @return Vector of checkpoint IDs and metadata
+     */
+    std::vector<std::pair<uint64_t, std::map<std::string, int64_t>>> list_checkpoints() const;
+    
+    /**
+     * @brief Delete a checkpoint
+     * @param checkpoint_id Checkpoint identifier to delete
+     * @return true if successful
+     */
+    bool delete_checkpoint(uint64_t checkpoint_id);
+    
+    /**
+     * @brief Set storage base path
+     * @param path Base directory for storage files
+     */
+    void set_storage_path(const std::string& path);
+    
+    /**
+     * @brief Get storage base path
+     * @return Base directory path
+     */
+    std::string get_storage_path() const;
+    
+    /**
+     * @brief Enable/disable compression
+     * @param enable true to enable compression
+     */
+    void set_compression_enabled(bool enable);
+    
+    /**
+     * @brief Get storage statistics
+     * @return Storage statistics map
+     */
+    std::map<std::string, uint64_t> get_storage_stats() const;
 
 private:
     // Core index
@@ -141,6 +210,9 @@ private:
     // Statistics
     mutable int64_t query_count_;
     mutable int64_t write_count_;
+    
+    // Storage engine (forward declared, initialized in constructor)
+    std::unique_ptr<class StorageEngine> storage_engine_;
 };
 
 } // namespace sage_tsdb
