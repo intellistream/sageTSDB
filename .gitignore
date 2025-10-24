@@ -31,3 +31,6 @@ Thumbs.db
 *.dylib
 *.exe
 CMakeFiles/
+
+#scripts
+push_feature.sh
