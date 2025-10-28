@@ -23,7 +23,7 @@ class TimeSeriesAlgorithm;
 class TimeSeriesDB {
 public:
     TimeSeriesDB();
-    ~TimeSeriesDB() = default;
+    ~TimeSeriesDB();
     
     /**
      * @brief Add a single data point

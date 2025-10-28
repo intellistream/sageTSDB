@@ -10,6 +10,8 @@ TimeSeriesDB::TimeSeriesDB()
       write_count_(0),
       storage_engine_(std::make_unique<StorageEngine>()) {}
 
+TimeSeriesDB::~TimeSeriesDB() = default;
+
 size_t TimeSeriesDB::add(const TimeSeriesData& data) {
     ++write_count_;
     return index_->add(data);
