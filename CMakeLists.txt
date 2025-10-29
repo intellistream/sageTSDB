@@ -86,25 +86,29 @@ if(OpenMP_CXX_FOUND)
 endif()
 
 # Install targets
-install(TARGETS sage_tsdb sage_tsdb_core sage_tsdb_algorithms
-    EXPORT sageTSDBTargets
-    LIBRARY DESTINATION lib
-    ARCHIVE DESTINATION lib
-    RUNTIME DESTINATION bin
-    INCLUDES DESTINATION include
-)
+# Standard install for standalone builds
+# (Python bindings handle their own install in python/CMakeLists.txt for SKBUILD)
+if(NOT DEFINED SKBUILD OR SKBUILD_STATE STREQUAL "wheel")
+    install(TARGETS sage_tsdb sage_tsdb_core sage_tsdb_algorithms
+        EXPORT sageTSDBTargets
+        LIBRARY DESTINATION lib
+        ARCHIVE DESTINATION lib
+        RUNTIME DESTINATION bin
+        INCLUDES DESTINATION include
+    )
+    
+    # Export targets
+    install(EXPORT sageTSDBTargets
+        FILE sageTSDBTargets.cmake
+        NAMESPACE sageTSDB::
+        DESTINATION lib/cmake/sageTSDB
+    )
+endif()
 
 # Install headers
 install(DIRECTORY include/sage_tsdb
     DESTINATION include
     FILES_MATCHING PATTERN "*.h"
-)
-
-# Export targets
-install(EXPORT sageTSDBTargets
-    FILE sageTSDBTargets.cmake
-    NAMESPACE sageTSDB::
-    DESTINATION lib/cmake/sageTSDB
 )
 
 # Create config file
