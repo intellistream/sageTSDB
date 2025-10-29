@@ -86,13 +86,21 @@ if(OpenMP_CXX_FOUND)
 endif()
 
 # Install targets - Conditional installation for SKBUILD and standalone builds
-if(DEFINED SKBUILD_PLATLIB_DIR)
-    # Python package build mode - install to source tree python/ directory
+if(DEFINED SKBUILD)
+    if(SKBUILD_STATE STREQUAL "editable")
+        # Editable install: install to source tree directly
+        set(_lib_install_dest "${CMAKE_CURRENT_SOURCE_DIR}/python")
+    else()
+        # Wheel build: install to wheel platlib (same directory as Python extension)
+        set(_lib_install_dest "${SKBUILD_PLATLIB_DIR}/sage/middleware/components/sage_tsdb/python")
+    endif()
+    
+    # Python package build mode - install to same directory as Python extension
     install(TARGETS sage_tsdb_core sage_tsdb_algorithms
-        LIBRARY DESTINATION ${CMAKE_CURRENT_SOURCE_DIR}/python
-        ARCHIVE DESTINATION ${CMAKE_CURRENT_SOURCE_DIR}/python
-        RUNTIME DESTINATION ${CMAKE_CURRENT_SOURCE_DIR}/python
-        INCLUDES DESTINATION ${CMAKE_CURRENT_SOURCE_DIR}/include
+        LIBRARY DESTINATION ${_lib_install_dest}
+        ARCHIVE DESTINATION ${_lib_install_dest}
+        RUNTIME DESTINATION ${_lib_install_dest}
+        COMPONENT python
     )
 else()
     # Standalone C++ build mode - standard installation paths
