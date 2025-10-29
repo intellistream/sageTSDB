@@ -85,10 +85,17 @@ if(OpenMP_CXX_FOUND)
     target_link_libraries(sage_tsdb_core PUBLIC OpenMP::OpenMP_CXX)
 endif()
 
-# Install targets
-# Standard install for standalone builds
-# (Python bindings handle their own install in python/CMakeLists.txt for SKBUILD)
-if(NOT DEFINED SKBUILD OR SKBUILD_STATE STREQUAL "wheel")
+# Install targets - 条件化安装以支持 SKBUILD 和独立构建
+if(DEFINED SKBUILD_PLATLIB_DIR)
+    # Python 包构建模式：安装到源码树 python/ 目录（与 Python 扩展同目录）
+    install(TARGETS sage_tsdb_core sage_tsdb_algorithms
+        LIBRARY DESTINATION ${CMAKE_CURRENT_SOURCE_DIR}/python
+        ARCHIVE DESTINATION ${CMAKE_CURRENT_SOURCE_DIR}/python
+        RUNTIME DESTINATION ${CMAKE_CURRENT_SOURCE_DIR}/python
+        INCLUDES DESTINATION ${CMAKE_CURRENT_SOURCE_DIR}/include
+    )
+else()
+    # 独立 C++ 构建模式：标准安装路径
     install(TARGETS sage_tsdb sage_tsdb_core sage_tsdb_algorithms
         EXPORT sageTSDBTargets
         LIBRARY DESTINATION lib
@@ -96,13 +103,14 @@ if(NOT DEFINED SKBUILD OR SKBUILD_STATE STREQUAL "wheel")
         RUNTIME DESTINATION bin
         INCLUDES DESTINATION include
     )
-    
-    # Export targets
+
+    # Export targets (仅独立构建时)
     install(EXPORT sageTSDBTargets
         FILE sageTSDBTargets.cmake
         NAMESPACE sageTSDB::
         DESTINATION lib/cmake/sageTSDB
     )
+endif()
 endif()
 
 # Install headers
