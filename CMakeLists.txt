@@ -85,9 +85,9 @@ if(OpenMP_CXX_FOUND)
     target_link_libraries(sage_tsdb_core PUBLIC OpenMP::OpenMP_CXX)
 endif()
 
-# Install targets - 条件化安装以支持 SKBUILD 和独立构建
+# Install targets - Conditional installation for SKBUILD and standalone builds
 if(DEFINED SKBUILD_PLATLIB_DIR)
-    # Python 包构建模式：安装到源码树 python/ 目录（与 Python 扩展同目录）
+    # Python package build mode - install to source tree python/ directory
     install(TARGETS sage_tsdb_core sage_tsdb_algorithms
         LIBRARY DESTINATION ${CMAKE_CURRENT_SOURCE_DIR}/python
         ARCHIVE DESTINATION ${CMAKE_CURRENT_SOURCE_DIR}/python
@@ -95,7 +95,7 @@ if(DEFINED SKBUILD_PLATLIB_DIR)
         INCLUDES DESTINATION ${CMAKE_CURRENT_SOURCE_DIR}/include
     )
 else()
-    # 独立 C++ 构建模式：标准安装路径
+    # Standalone C++ build mode - standard installation paths
     install(TARGETS sage_tsdb sage_tsdb_core sage_tsdb_algorithms
         EXPORT sageTSDBTargets
         LIBRARY DESTINATION lib
@@ -104,39 +104,38 @@ else()
         INCLUDES DESTINATION include
     )
 
-    # Export targets (仅独立构建时)
+    # Export targets for standalone build
     install(EXPORT sageTSDBTargets
         FILE sageTSDBTargets.cmake
         NAMESPACE sageTSDB::
         DESTINATION lib/cmake/sageTSDB
     )
+
+    # Install headers
+    install(DIRECTORY include/sage_tsdb
+        DESTINATION include
+        FILES_MATCHING PATTERN "*.h"
+    )
+
+    # Create config file
+    include(CMakePackageConfigHelpers)
+    write_basic_package_version_file(
+        "${PROJECT_BINARY_DIR}/sageTSDBConfigVersion.cmake"
+        VERSION ${PROJECT_VERSION}
+        COMPATIBILITY AnyNewerVersion
+    )
+
+    configure_file(cmake/sageTSDBConfig.cmake.in
+        "${PROJECT_BINARY_DIR}/sageTSDBConfig.cmake"
+        @ONLY
+    )
+
+    install(FILES
+        "${PROJECT_BINARY_DIR}/sageTSDBConfig.cmake"
+        "${PROJECT_BINARY_DIR}/sageTSDBConfigVersion.cmake"
+        DESTINATION lib/cmake/sageTSDB
+    )
 endif()
-endif()
-
-# Install headers
-install(DIRECTORY include/sage_tsdb
-    DESTINATION include
-    FILES_MATCHING PATTERN "*.h"
-)
-
-# Create config file
-include(CMakePackageConfigHelpers)
-write_basic_package_version_file(
-    "${PROJECT_BINARY_DIR}/sageTSDBConfigVersion.cmake"
-    VERSION ${PROJECT_VERSION}
-    COMPATIBILITY AnyNewerVersion
-)
-
-configure_file(cmake/sageTSDBConfig.cmake.in
-    "${PROJECT_BINARY_DIR}/sageTSDBConfig.cmake"
-    @ONLY
-)
-
-install(FILES
-    "${PROJECT_BINARY_DIR}/sageTSDBConfig.cmake"
-    "${PROJECT_BINARY_DIR}/sageTSDBConfigVersion.cmake"
-    DESTINATION lib/cmake/sageTSDB
-)
 
 # Python bindings
 if(BUILD_PYTHON_BINDINGS)
@@ -162,3 +161,4 @@ message(STATUS "  Build Python bindings: ${BUILD_PYTHON_BINDINGS}")
 message(STATUS "  Build shared libs: ${BUILD_SHARED_LIBS}")
 message(STATUS "  OpenMP support: ${ENABLE_OPENMP}")
 message(STATUS "")
+
