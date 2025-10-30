@@ -87,12 +87,24 @@ endif()
 
 # Install targets - Conditional installation for SKBUILD and standalone builds
 if(DEFINED SKBUILD)
-    if(SKBUILD_STATE STREQUAL "editable")
+    # 判断是否是 editable install
+    # SKBUILD_STATE 可能是 "editable" 或 "wheel" 或未定义
+    # 如果未定义或不是 "wheel"，默认按 editable 处理
+    set(_is_editable TRUE)
+    if(DEFINED SKBUILD_STATE)
+        if(SKBUILD_STATE STREQUAL "wheel")
+            set(_is_editable FALSE)
+        endif()
+    endif()
+    
+    if(_is_editable)
         # Editable install: install to source tree directly
         set(_lib_install_dest "${CMAKE_CURRENT_SOURCE_DIR}/python")
+        message(STATUS "sageTSDB: Editable install, lib -> ${_lib_install_dest}")
     else()
         # Wheel build: install to wheel platlib (same directory as Python extension)
         set(_lib_install_dest "${SKBUILD_PLATLIB_DIR}/sage/middleware/components/sage_tsdb/python")
+        message(STATUS "sageTSDB: Wheel build, lib -> ${_lib_install_dest}")
     endif()
     
     # Python package build mode - install to same directory as Python extension
