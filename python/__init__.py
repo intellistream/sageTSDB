@@ -1,9 +1,8 @@
 """
-SAGE TSDB Python Package
-
-Placeholder for Python bindings and utilities.
-C++ core functionality will be exposed through pybind11 bindings.
+SAGE TSDB Python Bindings
+High-performance time series database for streaming data
 """
 
-__version__ = "0.1.0"
-__all__ = []
+from ._sage_tsdb import *
+
+__all__ = ['TimeSeriesData', 'TimeSeriesDB', 'TimeSeriesIndex', 'TimeRange', 'QueryConfig']

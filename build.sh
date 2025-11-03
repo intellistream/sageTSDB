@@ -23,6 +23,7 @@ cd "$BUILD_DIR"
 echo -e "${YELLOW}Configuring CMake...${NC}"
 cmake .. \
     -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_INSTALL_PREFIX="$(cd ..; pwd)/install" \
     -DBUILD_TESTS=ON \
     -DBUILD_PYTHON_BINDINGS=ON \
     -DENABLE_OPENMP=ON
@@ -31,6 +32,10 @@ cmake .. \
 echo -e "${YELLOW}Building...${NC}"
 make -j$(nproc)
 
+# Install to local install directory
+echo -e "${YELLOW}Installing to local directory...${NC}"
+make install
+
 # Run tests
 if [ "$1" == "--test" ]; then
     echo -e "${YELLOW}Running tests...${NC}"
@@ -38,7 +43,7 @@ if [ "$1" == "--test" ]; then
 fi
 
 echo -e "${GREEN}Build completed successfully!${NC}"
-echo -e "${GREEN}Library: $BUILD_DIR/libsage_tsdb.so${NC}"
+echo -e "${GREEN}Libraries installed to: $(cd ..; pwd)/install/lib${NC}"
 
 if [ "$1" == "--install" ]; then
     echo -e "${YELLOW}Installing...${NC}"

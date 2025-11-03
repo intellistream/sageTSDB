@@ -41,6 +41,7 @@ add_library(sage_tsdb_core
     src/core/time_series_data.cpp
     src/core/time_series_index.cpp
     src/core/time_series_db.cpp
+    src/core/storage_engine.cpp
     src/utils/config.cpp
 )
 
@@ -84,46 +85,77 @@ if(OpenMP_CXX_FOUND)
     target_link_libraries(sage_tsdb_core PUBLIC OpenMP::OpenMP_CXX)
 endif()
 
-# Install targets
-install(TARGETS sage_tsdb sage_tsdb_core sage_tsdb_algorithms
-    EXPORT sageTSDBTargets
-    LIBRARY DESTINATION lib
-    ARCHIVE DESTINATION lib
-    RUNTIME DESTINATION bin
-    INCLUDES DESTINATION include
-)
+# Install targets - Conditional installation for SKBUILD and standalone builds
+if(DEFINED SKBUILD)
+    # 判断是否是 editable install
+    # SKBUILD_STATE 可能是 "editable" 或 "wheel" 或未定义
+    # 如果未定义或不是 "wheel"，默认按 editable 处理
+    set(_is_editable TRUE)
+    if(DEFINED SKBUILD_STATE)
+        if(SKBUILD_STATE STREQUAL "wheel")
+            set(_is_editable FALSE)
+        endif()
+    endif()
+    
+    if(_is_editable)
+        # Editable install: install to source tree directly
+        set(_lib_install_dest "${CMAKE_CURRENT_SOURCE_DIR}/python")
+        message(STATUS "sageTSDB: Editable install, lib -> ${_lib_install_dest}")
+    else()
+        # Wheel build: install to wheel platlib (same directory as Python extension)
+        set(_lib_install_dest "${SKBUILD_PLATLIB_DIR}/sage/middleware/components/sage_tsdb/python")
+        message(STATUS "sageTSDB: Wheel build, lib -> ${_lib_install_dest}")
+    endif()
+    
+    # Python package build mode - install to same directory as Python extension
+    install(TARGETS sage_tsdb_core sage_tsdb_algorithms
+        LIBRARY DESTINATION ${_lib_install_dest}
+        ARCHIVE DESTINATION ${_lib_install_dest}
+        RUNTIME DESTINATION ${_lib_install_dest}
+        COMPONENT python
+    )
+else()
+    # Standalone C++ build mode - standard installation paths
+    install(TARGETS sage_tsdb sage_tsdb_core sage_tsdb_algorithms
+        EXPORT sageTSDBTargets
+        LIBRARY DESTINATION lib
+        ARCHIVE DESTINATION lib
+        RUNTIME DESTINATION bin
+        INCLUDES DESTINATION include
+    )
 
-# Install headers
-install(DIRECTORY include/sage_tsdb
-    DESTINATION include
-    FILES_MATCHING PATTERN "*.h"
-)
+    # Export targets for standalone build
+    install(EXPORT sageTSDBTargets
+        FILE sageTSDBTargets.cmake
+        NAMESPACE sageTSDB::
+        DESTINATION lib/cmake/sageTSDB
+    )
 
-# Export targets
-install(EXPORT sageTSDBTargets
-    FILE sageTSDBTargets.cmake
-    NAMESPACE sageTSDB::
-    DESTINATION lib/cmake/sageTSDB
-)
+    # Install headers
+    install(DIRECTORY include/sage_tsdb
+        DESTINATION include
+        FILES_MATCHING PATTERN "*.h"
+    )
 
-# Create config file
-include(CMakePackageConfigHelpers)
-write_basic_package_version_file(
-    "${PROJECT_BINARY_DIR}/sageTSDBConfigVersion.cmake"
-    VERSION ${PROJECT_VERSION}
-    COMPATIBILITY AnyNewerVersion
-)
+    # Create config file
+    include(CMakePackageConfigHelpers)
+    write_basic_package_version_file(
+        "${PROJECT_BINARY_DIR}/sageTSDBConfigVersion.cmake"
+        VERSION ${PROJECT_VERSION}
+        COMPATIBILITY AnyNewerVersion
+    )
 
-configure_file(cmake/sageTSDBConfig.cmake.in
-    "${PROJECT_BINARY_DIR}/sageTSDBConfig.cmake"
-    @ONLY
-)
+    configure_file(cmake/sageTSDBConfig.cmake.in
+        "${PROJECT_BINARY_DIR}/sageTSDBConfig.cmake"
+        @ONLY
+    )
 
-install(FILES
-    "${PROJECT_BINARY_DIR}/sageTSDBConfig.cmake"
-    "${PROJECT_BINARY_DIR}/sageTSDBConfigVersion.cmake"
-    DESTINATION lib/cmake/sageTSDB
-)
+    install(FILES
+        "${PROJECT_BINARY_DIR}/sageTSDBConfig.cmake"
+        "${PROJECT_BINARY_DIR}/sageTSDBConfigVersion.cmake"
+        DESTINATION lib/cmake/sageTSDB
+    )
+endif()
 
 # Python bindings
 if(BUILD_PYTHON_BINDINGS)
@@ -149,3 +181,4 @@ message(STATUS "  Build Python bindings: ${BUILD_PYTHON_BINDINGS}")
 message(STATUS "  Build shared libs: ${BUILD_SHARED_LIBS}")
 message(STATUS "  OpenMP support: ${ENABLE_OPENMP}")
 message(STATUS "")
+
