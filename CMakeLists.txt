@@ -42,6 +42,7 @@ add_library(sage_tsdb_core
     src/core/time_series_index.cpp
     src/core/time_series_db.cpp
     src/core/storage_engine.cpp
+    src/core/lsm_tree.cpp
     src/utils/config.cpp
 )
 

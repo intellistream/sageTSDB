@@ -1,6 +1,7 @@
 #pragma once
 
 #include "time_series_data.h"
+#include "lsm_tree.h"
 #include <cstdint>
 #include <fstream>
 #include <memory>
@@ -63,10 +64,10 @@ struct CheckpointInfo {
  * @brief Storage engine for persisting time series data
  * 
  * Features:
- * - Binary serialization for efficient storage
+ * - LSM tree based storage for efficient writes
  * - Checkpoint support for incremental backups
- * - Automatic compression (future)
- * - WAL (Write-Ahead Logging) support (future)
+ * - Automatic compaction
+ * - Write-Ahead Logging for crash recovery
  */
 class StorageEngine {
 public:
@@ -77,14 +78,14 @@ public:
     /**
      * @brief Save time series data to disk
      * @param data Vector of time series data
-     * @param file_path Path to save file
+     * @param file_path Path to save file (for compatibility, uses LSM tree internally)
      * @return true if successful
      */
     bool save(const std::vector<TimeSeriesData>& data, const std::string& file_path);
     
     /**
      * @brief Load time series data from disk
-     * @param file_path Path to load file
+     * @param file_path Path to load file (for compatibility, queries LSM tree)
      * @return Vector of loaded data
      */
     std::vector<TimeSeriesData> load(const std::string& file_path);
@@ -154,48 +155,14 @@ public:
      * @return true if compression is enabled
      */
     bool is_compression_enabled() const { return compression_enabled_; }
+    
+    /**
+     * @brief Get underlying LSM tree
+     * @return Pointer to LSM tree
+     */
+    LSMTree* get_lsm_tree() { return lsm_tree_.get(); }
 
 private:
-    /**
-     * @brief Write file header
-     */
-    bool write_header(std::ofstream& out, const FileHeader& header);
-    
-    /**
-     * @brief Read file header
-     */
-    bool read_header(std::ifstream& in, FileHeader& header);
-    
-    /**
-     * @brief Serialize a single data point
-     */
-    bool write_data_point(std::ofstream& out, const TimeSeriesData& data);
-    
-    /**
-     * @brief Deserialize a single data point
-     */
-    bool read_data_point(std::ifstream& in, TimeSeriesData& data);
-    
-    /**
-     * @brief Write tags to stream
-     */
-    bool write_tags(std::ofstream& out, const Tags& tags);
-    
-    /**
-     * @brief Read tags from stream
-     */
-    bool read_tags(std::ifstream& in, Tags& tags);
-    
-    /**
-     * @brief Write fields to stream
-     */
-    bool write_fields(std::ofstream& out, const Fields& fields);
-    
-    /**
-     * @brief Read fields from stream
-     */
-    bool read_fields(std::ifstream& in, Fields& fields);
-    
     /**
      * @brief Get checkpoint file path
      */
@@ -216,16 +183,17 @@ private:
      */
     bool save_checkpoint_metadata();
     
-    /**
-     * @brief Validate file header
-     */
-    bool validate_header(const FileHeader& header);
-    
     std::string base_path_;                           // Base directory for storage
     std::map<uint64_t, CheckpointInfo> checkpoints_;  // Checkpoint registry
     bool compression_enabled_;                         // Compression flag
     uint64_t bytes_written_;                          // Total bytes written
     uint64_t bytes_read_;                             // Total bytes read
+    
+    // LSM tree for efficient storage
+    std::unique_ptr<LSMTree> lsm_tree_;
+    
+    // File to data mapping for independent file storage
+    std::map<std::string, std::vector<TimeSeriesData>> file_data_mapping_;
 };
 
 } // namespace sage_tsdb
