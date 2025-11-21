@@ -73,6 +73,49 @@ target_link_libraries(sage_tsdb_algorithms
         sage_tsdb_core
 )
 
+# Plugins library (optional, if PECJ is available)
+option(BUILD_PLUGINS "Build plugin system" ON)
+if(BUILD_PLUGINS)
+    # Check for PECJ
+    if(DEFINED PECJ_DIR)
+        # Convert to absolute path if relative
+        get_filename_component(PECJ_DIR_ABS "${PECJ_DIR}" ABSOLUTE BASE_DIR "${CMAKE_CURRENT_SOURCE_DIR}")
+        set(PECJ_INCLUDE_DIR "${PECJ_DIR_ABS}/include")
+        message(STATUS "PECJ directory: ${PECJ_DIR_ABS}")
+        message(STATUS "PECJ include directory: ${PECJ_INCLUDE_DIR}")
+        
+        if(EXISTS "${PECJ_INCLUDE_DIR}")
+            add_library(sage_tsdb_plugins
+                src/plugins/plugin_manager.cpp
+                src/plugins/adapters/pecj_adapter.cpp
+                src/plugins/adapters/fault_detection_adapter.cpp
+            )
+            
+            target_include_directories(sage_tsdb_plugins
+                PUBLIC
+                    $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
+                    $<INSTALL_INTERFACE:include>
+                    ${PECJ_INCLUDE_DIR}
+                PRIVATE
+                    ${PROJECT_SOURCE_DIR}/src
+            )
+            
+            target_link_libraries(sage_tsdb_plugins
+                PUBLIC
+                    sage_tsdb_core
+            )
+            
+            message(STATUS "Plugin system enabled with PECJ support")
+        else()
+            message(WARNING "PECJ include directory not found: ${PECJ_INCLUDE_DIR}")
+            message(WARNING "Building plugins without PECJ support")
+        endif()
+    else()
+        message(STATUS "PECJ_DIR not set, skipping plugin build")
+        message(STATUS "To enable plugins: cmake -DPECJ_DIR=/path/to/PECJ ..")
+    endif()
+endif()
+
 # Main library (combines all)
 add_library(sage_tsdb INTERFACE)
 target_link_libraries(sage_tsdb
@@ -180,6 +223,12 @@ message(STATUS "  C++ standard: ${CMAKE_CXX_STANDARD}")
 message(STATUS "  Build tests: ${BUILD_TESTS}")
 message(STATUS "  Build Python bindings: ${BUILD_PYTHON_BINDINGS}")
 message(STATUS "  Build shared libs: ${BUILD_SHARED_LIBS}")
+message(STATUS "  Build plugins: ${BUILD_PLUGINS}")
+if(TARGET sage_tsdb_plugins)
+    message(STATUS "  PECJ support: YES (${PECJ_DIR})")
+else()
+    message(STATUS "  PECJ support: NO")
+endif()
 message(STATUS "  OpenMP support: ${ENABLE_OPENMP}")
 message(STATUS "")
 
