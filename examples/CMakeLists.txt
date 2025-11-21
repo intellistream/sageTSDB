@@ -12,7 +12,27 @@ target_link_libraries(persistence_example
         sage_tsdb_core
 )
 
+# Plugin usage example (only if plugins are built)
+if(TARGET sage_tsdb_plugins)
+    add_executable(plugin_usage_example
+        plugin_usage_example.cpp
+    )
+    
+    target_link_libraries(plugin_usage_example
+        PRIVATE
+            sage_tsdb_core
+            sage_tsdb_plugins
+    )
+    
+    message(STATUS "Building plugin_usage_example")
+endif()
+
 # Install examples (optional)
-install(TARGETS persistence_example
+set(EXAMPLE_TARGETS persistence_example)
+if(TARGET plugin_usage_example)
+    list(APPEND EXAMPLE_TARGETS plugin_usage_example)
+endif()
+
+install(TARGETS ${EXAMPLE_TARGETS}
     RUNTIME DESTINATION bin/examples
 )

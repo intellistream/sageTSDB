@@ -34,3 +34,6 @@ CMakeFiles/
 
 #scripts
 push_feature.sh
+
+#docs
+docs/
