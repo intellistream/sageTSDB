@@ -80,6 +80,33 @@ target_link_libraries(test_storage_engine
     test_utils
 )
 
+# Plugin tests (only if plugins are built)
+if(TARGET sage_tsdb_plugins)
+    add_executable(test_pecj_plugin
+      test_pecj_plugin.cpp
+    )
+    target_link_libraries(test_pecj_plugin
+      PRIVATE
+        sage_tsdb_plugins
+        sage_tsdb_core
+        GTest::gtest_main
+        test_utils
+    )
+    
+    add_executable(test_fault_detection_plugin
+      test_fault_detection_plugin.cpp
+    )
+    target_link_libraries(test_fault_detection_plugin
+      PRIVATE
+        sage_tsdb_plugins
+        sage_tsdb_core
+        GTest::gtest_main
+        test_utils
+    )
+    
+    message(STATUS "Building plugin tests")
+endif()
+
 # Register tests with CTest
 include(GoogleTest)
 gtest_discover_tests(test_time_series_data)
@@ -88,3 +115,11 @@ gtest_discover_tests(test_time_series_db)
 gtest_discover_tests(test_stream_join)
 gtest_discover_tests(test_window_aggregator)
 gtest_discover_tests(test_storage_engine)
+
+if(TARGET test_pecj_plugin)
+    gtest_discover_tests(test_pecj_plugin)
+endif()
+
+if(TARGET test_fault_detection_plugin)
+    gtest_discover_tests(test_fault_detection_plugin)
+endif()
