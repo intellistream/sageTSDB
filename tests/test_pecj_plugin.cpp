@@ -61,6 +61,9 @@ TEST_F(PECJAdapterTest, FeedDataTest) {
     // Feed data should not throw
     EXPECT_NO_THROW(adapter.feedData(data));
     
+    // Wait for async processing
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    
     // Check statistics
     auto stats = adapter.getStats();
     EXPECT_GT(stats["tuples_processed_s"] + stats["tuples_processed_r"], 0);
@@ -120,6 +123,9 @@ TEST_F(PECJAdapterTest, ResetTest) {
     data.timestamp = 1000;
     data.value = 100.0;
     adapter.feedData(data);
+    
+    // Wait for async processing
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
     
     // Verify stats
     auto stats1 = adapter.getStats();

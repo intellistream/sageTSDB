@@ -75,14 +75,20 @@ target_link_libraries(sage_tsdb_algorithms
 
 # Plugins library (optional, if PECJ is available)
 option(BUILD_PLUGINS "Build plugin system" ON)
+option(PECJ_FULL_INTEGRATION "Enable full PECJ integration (requires PECJ library)" OFF)
+
 if(BUILD_PLUGINS)
     # Check for PECJ
     if(DEFINED PECJ_DIR)
         # Convert to absolute path if relative
         get_filename_component(PECJ_DIR_ABS "${PECJ_DIR}" ABSOLUTE BASE_DIR "${CMAKE_CURRENT_SOURCE_DIR}")
         set(PECJ_INCLUDE_DIR "${PECJ_DIR_ABS}/include")
+        set(PECJ_BUILD_DIR "${PECJ_DIR_ABS}/build")
+        set(PECJ_LIB_DIR "${PECJ_BUILD_DIR}/src")
+        
         message(STATUS "PECJ directory: ${PECJ_DIR_ABS}")
         message(STATUS "PECJ include directory: ${PECJ_INCLUDE_DIR}")
+        message(STATUS "PECJ lib directory: ${PECJ_LIB_DIR}")
         
         if(EXISTS "${PECJ_INCLUDE_DIR}")
             add_library(sage_tsdb_plugins
@@ -100,10 +106,39 @@ if(BUILD_PLUGINS)
                     ${PROJECT_SOURCE_DIR}/src
             )
             
-            target_link_libraries(sage_tsdb_plugins
-                PUBLIC
-                    sage_tsdb_core
-            )
+            # Check for PECJ library and enable full integration
+            if(PECJ_FULL_INTEGRATION)
+                # Find PECJ library
+                find_library(PECJ_LIBRARY
+                    NAMES OoOJoin libOoOJoin
+                    HINTS ${PECJ_LIB_DIR}
+                    PATH_SUFFIXES lib lib64
+                )
+                
+                if(PECJ_LIBRARY)
+                    message(STATUS "Found PECJ library: ${PECJ_LIBRARY}")
+                    target_compile_definitions(sage_tsdb_plugins PUBLIC PECJ_FULL_INTEGRATION=1)
+                    target_link_libraries(sage_tsdb_plugins
+                        PUBLIC
+                            sage_tsdb_core
+                            ${PECJ_LIBRARY}
+                    )
+                    
+                    # Find libtorch if available (required by PECJ for ML features)
+                    find_package(Torch QUIET)
+                    if(Torch_FOUND)
+                        message(STATUS "Found Torch: ${TORCH_LIBRARIES}")
+                        target_link_libraries(sage_tsdb_plugins PUBLIC ${TORCH_LIBRARIES})
+                    endif()
+                else()
+                    message(WARNING "PECJ library not found in ${PECJ_LIB_DIR}")
+                    message(WARNING "Building with stub PECJ support. Run 'make' in PECJ directory first.")
+                    target_link_libraries(sage_tsdb_plugins PUBLIC sage_tsdb_core)
+                endif()
+            else()
+                target_link_libraries(sage_tsdb_plugins PUBLIC sage_tsdb_core)
+                message(STATUS "Building with stub PECJ support (set -DPECJ_FULL_INTEGRATION=ON for full support)")
+            endif()
             
             message(STATUS "Plugin system enabled with PECJ support")
         else()
