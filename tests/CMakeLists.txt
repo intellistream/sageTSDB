@@ -8,6 +8,14 @@ FetchContent_Declare(
   GIT_TAG v1.14.0
 )
 set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
+
+# Ensure GoogleTest is compiled with the same C++ standard and ABI as the main project
+set(CMAKE_CXX_STANDARD ${CMAKE_CXX_STANDARD} CACHE INTERNAL "")
+set(CMAKE_CXX_STANDARD_REQUIRED ON CACHE INTERNAL "")
+
+# Force old ABI for compatibility with PyTorch/PECJ (they use old ABI)
+add_compile_definitions(_GLIBCXX_USE_CXX11_ABI=0)
+
 FetchContent_MakeAvailable(googletest)
 
 enable_testing()

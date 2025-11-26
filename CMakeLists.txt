@@ -1,10 +1,13 @@
 cmake_minimum_required(VERSION 3.15)
 project(sageTSDB VERSION 0.1.0 LANGUAGES CXX)
 
-# Set C++ standard
-set(CMAKE_CXX_STANDARD 17)
+# Set C++ standard (C++20 required for PECJ integration)
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+
+# Force old ABI for compatibility with PyTorch/PECJ (they use old ABI)
+add_compile_definitions(_GLIBCXX_USE_CXX11_ABI=0)
 
 # Options
 option(BUILD_TESTS "Build tests" ON)
@@ -77,6 +80,21 @@ target_link_libraries(sage_tsdb_algorithms
 option(BUILD_PLUGINS "Build plugin system" ON)
 option(PECJ_FULL_INTEGRATION "Enable full PECJ integration (requires PECJ library)" OFF)
 
+# Set CMAKE_PREFIX_PATH for finding Torch (from PyTorch installation)
+if(NOT DEFINED CMAKE_PREFIX_PATH)
+    # Try to find torch from Python site-packages
+    execute_process(
+        COMMAND python3 -c "import torch; print(torch.utils.cmake_prefix_path)"
+        OUTPUT_VARIABLE TORCH_CMAKE_PREFIX
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET
+    )
+    if(TORCH_CMAKE_PREFIX)
+        list(APPEND CMAKE_PREFIX_PATH ${TORCH_CMAKE_PREFIX})
+        message(STATUS "Found PyTorch cmake path: ${TORCH_CMAKE_PREFIX}")
+    endif()
+endif()
+
 if(BUILD_PLUGINS)
     # Check for PECJ
     if(DEFINED PECJ_DIR)
@@ -108,30 +126,38 @@ if(BUILD_PLUGINS)
             
             # Check for PECJ library and enable full integration
             if(PECJ_FULL_INTEGRATION)
-                # Find PECJ library
+                # Find Torch first (required by PECJ)
+                find_package(Torch REQUIRED)
+                if(Torch_FOUND)
+                    message(STATUS "Found Torch: ${TORCH_LIBRARIES}")
+                    message(STATUS "Torch include dirs: ${TORCH_INCLUDE_DIRS}")
+                endif()
+                
+                # Find PECJ library (IntelliStreamOoOJoin is the actual library name)
                 find_library(PECJ_LIBRARY
-                    NAMES OoOJoin libOoOJoin
-                    HINTS ${PECJ_LIB_DIR}
-                    PATH_SUFFIXES lib lib64
+                    NAMES IntelliStreamOoOJoin libIntelliStreamOoOJoin OoOJoin libOoOJoin
+                    HINTS ${PECJ_BUILD_DIR} ${PECJ_LIB_DIR} ${PECJ_DIR_ABS}/build
+                    PATH_SUFFIXES lib lib64 src
                 )
                 
                 if(PECJ_LIBRARY)
                     message(STATUS "Found PECJ library: ${PECJ_LIBRARY}")
                     target_compile_definitions(sage_tsdb_plugins PUBLIC PECJ_FULL_INTEGRATION=1)
+                    
+                    # Add Torch include directories
+                    target_include_directories(sage_tsdb_plugins
+                        PUBLIC
+                            ${TORCH_INCLUDE_DIRS}
+                    )
+                    
                     target_link_libraries(sage_tsdb_plugins
                         PUBLIC
                             sage_tsdb_core
                             ${PECJ_LIBRARY}
+                            ${TORCH_LIBRARIES}
                     )
-                    
-                    # Find libtorch if available (required by PECJ for ML features)
-                    find_package(Torch QUIET)
-                    if(Torch_FOUND)
-                        message(STATUS "Found Torch: ${TORCH_LIBRARIES}")
-                        target_link_libraries(sage_tsdb_plugins PUBLIC ${TORCH_LIBRARIES})
-                    endif()
                 else()
-                    message(WARNING "PECJ library not found in ${PECJ_LIB_DIR}")
+                    message(WARNING "PECJ library not found in ${PECJ_BUILD_DIR}")
                     message(WARNING "Building with stub PECJ support. Run 'make' in PECJ directory first.")
                     target_link_libraries(sage_tsdb_plugins PUBLIC sage_tsdb_core)
                 endif()

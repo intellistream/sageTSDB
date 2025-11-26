@@ -12,7 +12,10 @@
 
 // Conditional inclusion based on PECJ availability
 #ifdef PECJ_FULL_INTEGRATION
-#include <OoOJoin.h>
+// Only include necessary PECJ headers to avoid torch dependency
+#include <Common/Tuples.h>
+#include <Common/Window.h>
+#include <Operator/AbstractOperator.h>
 #include <Operator/OperatorTable.h>
 #include <Utils/ConfigMap.hpp>
 #else
