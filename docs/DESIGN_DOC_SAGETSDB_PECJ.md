@@ -4,13 +4,13 @@
 
 ## 1. 总体架构
 
-sageTSDB 采用插件化架构，通过 `PluginManager` 管理所有算法组件。PECJ 和故障检测算法均被封装为独立的插件（Adapter），通过统一的接口与宿主系统交互，并通过 `EventBus` 进行解耦通信。
+sageTSDB 采用插件化架构，通过 `PluginManager` 管理所有算法组件。PECJ 和故障检测算法均被封装为独立的插件（Adapter），通过统一的 `IAlgorithmPlugin` 接口与宿主系统交互，并通过 `EventBus` 进行解耦通信。
 
 ### 核心组件
-*   **PluginManager**: 负责插件的加载、初始化、生命周期管理及资源分配（线程池、内存限制）。
-*   **EventBus**: 提供发布/订阅机制，实现插件间、插件与核心系统间的异步通信。
-*   **PECJAdapter**: 封装 PECJ 库，负责数据格式转换和 PECJ 算子管理。
-*   **FaultDetectionAdapter**: 封装故障检测逻辑（Z-Score, VAE），负责实时异常监测。
+*   **PluginManager**: 负责插件的加载、初始化、生命周期管理及资源分配（线程池、内存限制）。通过 `PluginRegistry` 单例注册和创建插件实例。
+*   **EventBus**: 提供发布/订阅机制，实现插件间、插件与核心系统间的异步通信。使用独立的后台线程处理事件队列，支持零拷贝数据传递。
+*   **PECJAdapter**: 封装 PECJ 库（`OoOJoin::AbstractOperator`），负责数据格式转换（`TimeSeriesData` → `TrackTuple`）和 PECJ 算子管理。支持 Stub 模式（无 PECJ 依赖）和 Full 模式（完整集成）。
+*   **FaultDetectionAdapter**: 封装故障检测逻辑（Z-Score, VAE），负责实时异常监测。使用滑动窗口维护历史数据，支持在线模型更新。
 
 ## 2. 运行机制与多线程模型
 
@@ -18,122 +18,481 @@ sageTSDB 采用插件化架构，通过 `PluginManager` 管理所有算法组件
 系统采用分层多线程模型，确保高吞吐量和低延迟：
 
 1.  **主摄取线程 (Ingestion Thread)**:
-    *   负责接收外部数据流（如 Kafka, 网络端口）。
-    *   调用 `PluginManager::feedData` 将数据分发给各激活插件。
-    *   设计为非阻塞，仅做简单分发。
+    *   负责接收外部数据流（如 CSV 文件、Kafka、网络端口）。
+    *   调用 `PluginManager::feedDataToAll()` 将数据分发给所有已启用的插件。
+    *   设计为非阻塞，使用 `std::shared_ptr<TimeSeriesData>` 实现零拷贝数据共享。
+    *   同时通过 `EventBus::publish_data()` 发布数据摄取事件。
 
-2.  **插件管理线程池 (Plugin Worker Pool)**:
-    *   由 `PluginManager` 维护（配置项 `thread_pool_size`）。
-    *   负责执行插件的 `process()` 任务，处理繁重的计算逻辑。
-    *   PECJ 和故障检测的计算任务可在此池中并发执行。
+2.  **插件工作线程 (Plugin Worker Thread)**:
+    *   **每个插件维护自己的独立工作线程**（而非共享线程池）。
+    *   例如，`PECJAdapter::workerLoop()` 处理自己的数据队列。
+    *   使用条件变量 (`queue_cv_`) 进行线程同步，避免忙等待。
+    *   数据通过 `std::queue<std::pair<TimeSeriesData, bool>>` 异步缓冲。
 
 3.  **PECJ 内部线程**:
     *   PECJ 算法本身支持多线程（配置项 `threads`）。
     *   用于并行处理 Join 操作、状态更新和变分推断计算。
+    *   通过 `OoOJoin::AbstractOperator` 内部的线程池管理。
 
 4.  **EventBus 分发线程**:
-    *   独立的后台线程，负责从事件队列中取出事件（如 `WINDOW_TRIGGERED`, `RESULT_READY`）并回调订阅者。
+    *   独立的后台线程（`EventBus::worker_thread_`），负责从事件队列中取出事件。
+    *   事件类型包括：`DATA_INGESTED`, `WINDOW_TRIGGERED`, `RESULT_READY`, `ERROR_OCCURRED`。
+    *   使用 `std::condition_variable` 实现高效的事件通知机制。
+    *   回调订阅者时支持按事件类型分发（`EventType` → `std::vector<Subscriber>`）。
 
 ### 2.2 Window 间的可见性与交互
 在流处理中，窗口（Window）状态的可见性通过以下机制保证：
 
-*   **内部可见性 (PECJ)**: PECJ 内部维护滑动窗口（Sliding Window）。S 流和 R 流的元组在时间窗口内是互相可见的，PECJ 通过 Watermark 机制触发窗口计算，确保乱序数据在窗口关闭前被正确处理。
+*   **内部可见性 (PECJ)**: 
+    *   PECJ 内部维护滑动窗口（Sliding Window），配置参数为 `windowLen` 和 `slideLen`（单位：微秒）。
+    *   S 流和 R 流的元组通过 `feedTupleS()` 和 `feedTupleR()` 注入到 PECJ 算子。
+    *   PECJ 通过 Watermark 机制（`wmTag`, `latenessMs`）触发窗口计算，确保乱序数据在窗口关闭前被正确处理。
+    *   窗口内的 Join 结果可通过 `getResult()` 获取精确结果，或 `getApproximateResult()` 获取 AQP 估计。
+
+    ## 3. 集成方案概览（目标与约束）
+
+    目标：在不破坏现有解耦插件架构的前提下，由 sageTSDB 对 PECJ 的资源（线程、内存、模型文件）进行代管，并提供两种可选运行模式：
+
+    - Stub 模式（默认）：只编译并暴露 `PECJAdapter` 的接口和轻量 stub 实现，不依赖 PECJ 库；便于 CI、轻量部署与快速编译。
+    - Full 模式（可选，受预编译参数控制）：在构建时链接并启用 PECJ 库与其对 Torch 的依赖，由 sageTSDB 代管 PECJ 的运行时资源（线程池、内存配额、模型加载与生命周期）。
+
+    约束：
+
+    - 不修改 PECJ 的外部 API，尽量通过 Adapter 层实现适配与包装；
+    - 预编译控制（CMake 变量）必须能够在 cmake 配置阶段决定是否包含 PECJ 依赖（已在 `CMakeLists.txt` 中保留 `PECJ_FULL_INTEGRATION` 与 `PECJ_DIR` 选项）；
+    - 代管资源必须可配置、可限额（thread count、memory limit、GPUs），并且可以在运行时通过 `PluginManager` 或 `PluginRegistry` 查询与监控；
+    - 保持原有 EventBus 解耦通信与插件独立工作线程模型可选性：在 Full 模式下仍支持把 PECJ 的内部并行性限制在 sageTSDB 管理的线程池中，以避免线程数量爆炸。
+
+    ## 4. CMake / 构建策略（预编译参数）
+
+    已存在的选项（见 `CMakeLists.txt`）：
+
+    - `-DPECJ_DIR=/path/to/PECJ`：指向 PECJ 源或构建目录，用于寻找 include/lib；
+    - `-DPECJ_FULL_INTEGRATION=ON|OFF`（默认 OFF）：开启 Full 模式将触发 `find_package(Torch REQUIRED)` 与 `find_library(PECJ_LIBRARY ...)` 步骤；
+
+    建议：
+
+    - 保持现有变量兼容性，不增加破坏性改动；
+    - 增加一个显式资源控制宏 `-DPECJ_MANAGED_THREADS=<n>`（默认 0 = 由 PECJ 自管理），当设置为 >0 时，sageTSDB 将把该值传递给 `PECJAdapter`，用于创建受控线程池；
+    - 在 `CMakeLists.txt` 中增加清晰的诊断 message（已部分实现），并在找不到库时改为 fail 或继续构建 stub（视 CI 策略）；
+
+    构建示例：
+
+    cmake -S . -B build -DPECJ_DIR=/opt/PECJ -DPECJ_FULL_INTEGRATION=ON -DPECJ_MANAGED_THREADS=8
+
+    ## 5. 资源代管模型
+
+    设计要点：
+
+    - 由 `PluginManager` 在创建 `PECJAdapter` 实例时注入资源描述（`ResourceQuota`），包含：`max_threads`, `max_memory_bytes`, `gpu_ids`（可选）；
+    - `PECJAdapter` 在 Full 模式下负责把这些配额应用到 PECJ 算子和底层 Torch 环境：设置线程池大小、限制可用 GPU（通过环境变量或 Torch API）、在必要时通过 `std::thread` + `std::mutex` 或自有线程池实现并发控制；
+    - 在 Stub 模式下，`PECJAdapter` 使用空实现或轻量替代逻辑，并仍然向 `PluginManager` 报告相同的运行时指标（QPS、latency、memory_usage），便于上层监控透明；
+    - 内存配额通过 allocator hook（若 PECJ/Torch 支持）或运营时监控与回收策略结合实现；超限时触发 `PluginManager` 的回收或降级策略（例如切换到 Stub 模式或限制窗口大小）。
+
+    契约（简化版）：
+
+    - Input: `TimeSeriesData`（shared_ptr）或 EventBus 发布的 `DataEvent`；
+    - Output: 通过 `EventBus` 发布 `RESULT_READY` 或通过回调接口返回 `JoinResult`；
+    - Error: 在异常或资源耗尽时发布 `ERROR_OCCURRED`，包含 `ErrorCode` 与可恢复性标识；
+    - Lifecycle: `init(ResourceQuota)`, `start()`, `stop()`, `status()`。
+
+    ## 6. Adapter API 细化（`PECJAdapter` 合约）
+
+    接口草案（位于 `include/sage_tsdb/plugins/adapters/pecj_adapter.h`）：
+
+    - class PECJAdapter : public IAlgorithmPlugin {
+         // 初始化时注入资源配置与路径
+         bool init(const PluginConfig &cfg, const ResourceQuota &quota);
+         // 运行主循环或启动内部线程
+         void start() override;
+         void stop() override;
+         // 接收 TimeSeriesData（由 PluginManager 转发）
+         void onData(std::shared_ptr<TimeSeriesData> data) override;
+         // 用于测试/诊断：导出内部状态快照
+         PluginStatus status() const override;
+    };
+
+    实现注意事项：
+
+    - 在 Full 模式下，应将 PECJ 算子实例封装在 `std::unique_ptr<PECJOperator>`，并在 `init()` 中完成模型与参数加载；
+    - 将 PECJ 的线程分配映射到 `ResourceQuota::max_threads`（当 `PECJ_MANAGED_THREADS` > 0 优先使用该值）；
+    - 在 `onData()` 中做最小的数据转换开销，使用 `std::shared_ptr` 保证零拷贝传递，并将实际的 feed 操作交给内部工作线程处理；
+    - 所有对外暴露的异常都应被捕获并通过 `EventBus` 上报，而不直接抛出到宿主线程。
+
+    ## 7. 迁移与实施步骤（开发任务清单）
+
+    1. 在当前分支 `pecj_resource_integration` 上完成下列小步提交：
+        - 补充/完善 `DESIGN_DOC_SAGETSDB_PECJ.md`（当前改动）；
+        - 在 `include` 中确认 `pecj_adapter.h` 的接口并写入 `init(...)` 与 `ResourceQuota` 定义；
+        - 修改 `CMakeLists.txt`（如需）以暴露 `PECJ_MANAGED_THREADS` 并验证 `PECJ_FULL_INTEGRATION` 工作流；
+    2. 实现 `PECJAdapter` 的 Stub 版本（可立即启用），包括配置读取与事件发布；
+    3. 添加 `ResourceQuota` 与 `PluginConfig` 的序列化/反序列化支持（从配置文件或运行时 API）；
+    4. 在 Full 模式下实现 PECJ 的接入点：查找库、链接、加载算子、受控线程池；
+    5. 集成监控：在 `PluginManager` 中添加对插件资源使用的采样并在 `/metrics` 或日志中暴露；
+    6. 编写单元/集成测试：
+        - Stub 模式下的行为测试；
+        - Full 模式下与 PECJ 库的基本互操作测试（如果 CI 环境包含 PECJ）；
+    7. 性能与回归测试：评估在代管线程池与 PECJ 自管理模式下的吞吐/延迟差异，并记录结果。
+
+    ## 8. 回滚与降级策略
+
+    - 如果在运行时检测到资源超额或 PECJ 算子失败，`PluginManager` 应能自动将该插件从 Full 切换至 Stub（或暂停并报警）；
+    - 提供一个运维开关（runtime flag）允许动态禁用 PECJ Adapter，便于紧急回滚而无需重新构建。
+
+    ## 9. 分支与发布建议
+
+    - 使用当前分支 `pecj_resource_integration` 进行所有实现与测试；
+    - 完成后发起 MR 到 `main-dev`，并在描述中列出对 CMake 参数与运行时配置的变更；
+    - 合并策略：先在内部 CI（含 PECJ）通过后，再合并到 `main-dev`，最后合并到 `main`。
+
+    ## 10. 验证要点
+
+    - 构建覆盖：默认构建（无 PECJ）仍然通过；
+    - 开启 `-DPECJ_FULL_INTEGRATION=ON` 且 `PECJ_DIR` 正确时能成功链接并运行示例；
+    - 资源限额生效（模拟高负载并确认 `PluginManager` 限制线程/内存）；
+    - EventBus 的事件语义保持不变，现有插件不受影响。
+
+    ---
+
+    （文档末尾保留历史设计与实现细节）
+    
 *   **组件间可见性 (EventBus)**:
-    *   当 PECJ 完成一个窗口的计算时，会发布 `WINDOW_TRIGGERED` 或 `RESULT_READY` 事件。
-    *   故障检测插件或下游组件订阅这些事件，从而“看到”窗口的计算结果。
-    *   **共享内存 (Zero-Copy)**: 通过 `std::shared_ptr` 传递数据载荷，确保不同插件看到的窗口数据是同一份物理内存，避免拷贝。
+    *   当 PECJ 完成一个窗口的计算时，工作线程检测到新的 Join 结果，会调用 `publishWindowResult()`。
+    *   发布 `WINDOW_TRIGGERED` 或 `RESULT_READY` 事件，携带 Join 计数和 AQP 结果。
+    *   故障检测插件或下游组件通过 `EventBus::subscribe()` 订阅这些事件。
+    *   **零拷贝 (Zero-Copy)**: 事件载荷使用 `std::shared_ptr<void>`，多个订阅者共享同一份数据，避免内存拷贝开销。
+
+*   **数据流识别**:
+    *   通过 `TimeSeriesData.tags["stream"]` 标识 S 或 R 流。
+    *   若未设置，默认使用时间戳奇偶性判断：`(timestamp/1000) % 2 == 0` → S 流，否则为 R 流。
 
 ## 3. PECJ 算法启动与集成
 
 ### 3.1 启动流程
-1.  **加载插件**: 用户通过 `PluginManager::loadPlugin("pecj", config)` 请求加载。
+1.  **加载插件**: 
+    *   用户通过 `PluginManager::loadPlugin("pecj", config)` 请求加载。
+    *   `PluginManager` 调用 `PluginRegistry::instance().create_plugin("pecj", config)`。
+    *   `PluginRegistry` 使用工厂函数创建 `PECJAdapter` 实例。
+    
 2.  **初始化 (initialize)**:
-    *   `PECJAdapter` 解析配置参数（`windowLen`, `slideLen`, `wmTag` 等）。
-    *   调用 `initializePECJ()`。
-    *   在内部实例化 `OoOJoin::AbstractOperator`（PECJ 的核心算子）。
-    *   配置 PECJ 的内部参数（如 Join 策略、缓冲区大小）。
-3.  **启动 (start)**: 标记插件为运行状态，准备接收数据。
+    *   `PECJAdapter::initialize()` 检查 `initialized_` 标志，避免重复初始化。
+    *   调用 `parseConfig()` 解析配置参数：
+        *   窗口参数：`windowLen`（微秒）, `slideLen`（微秒）, `latenessMs`（毫秒）
+        *   缓冲区：`sLen`, `rLen`（元组数量）
+        *   算子类型：`operator`（字符串，如 "IMA", "SHJ"）
+    *   调用 `initializePECJ()`：
+        *   **Full 模式**（`PECJ_FULL_INTEGRATION` 定义时）：
+            *   创建 `INTELLI::ConfigMap` 并设置参数。
+            *   通过 `OoOJoin::OperatorTable::findOperator()` 查找算子。
+            *   调用 `setConfig()`, `setWindow()`, `setBufferLen()`, `syncTimeStruct()` 配置算子。
+        *   **Stub 模式**（默认）：打印提示信息，不加载 PECJ 库。
+    
+3.  **启动 (start)**: 
+    *   检查 `initialized_` 和 `running_` 标志。
+    *   调用 PECJ 算子的 `start()` 方法（Full 模式）。
+    *   启动独立的工作线程 `worker_thread_`（`std::thread(&PECJAdapter::workerLoop, this)`）。
+    *   设置 `running_ = true`。
 
 ### 3.2 数据流转
-*   外部 `TimeSeriesData` -> `PECJAdapter::feedData`。
-*   **格式转换**: 适配器将 `TimeSeriesData` 转换为 PECJ 专用的 `OoOJoin::TrackTuple`。
-    *   自动识别流类型（S流/R流），通常基于 Tag 或时间戳奇偶性。
-*   **注入**: 调用 PECJ 算子的 `feedTuple` 接口注入数据。
+*   **摄取入口**: `PECJAdapter::feedData(const TimeSeriesData& data)`
+    *   检查 `initialized_` 和 `running_` 标志，若未启动则忽略数据。
+    *   根据 `data.tags["stream"]` 判断流类型（S 或 R）。
+    *   若未设置 stream 标签，使用时间戳奇偶性：`(timestamp/1000) % 2 == 0` → S 流。
+    *   将数据和流类型标记 `(data, is_s_stream)` 推入异步队列 `data_queue_`。
+    *   通过条件变量 `queue_cv_` 唤醒工作线程。
+    
+*   **工作线程处理** (`workerLoop`):
+    *   从 `data_queue_` 中取出数据。
+    *   根据流类型调用 `feedStreamS()` 或 `feedStreamR()`。
+    *   每次处理后检查 PECJ 的 `getResult()`，若有新结果则发布事件。
+    
+*   **格式转换** (`convertToTrackTuple`):
+    *   提取 `key`：优先从 `data.tags["key"]` 读取，否则对 `measurement` 名称进行哈希。
+    *   提取 `value`：调用 `data.as_double()`。
+    *   创建 `OoOJoin::TrackTuple(key, value)`。
+    *   设置 `eventTime = data.timestamp`（事件时间）。
+    *   设置 `arrivalTime`：当前系统时间相对于 `time_base_` 的微秒偏移。
+    *   设置 `streamId`：S 流为 0，R 流为 1。
+    
+*   **注入 PECJ**: 
+    *   调用 `pecj_operator_->feedTupleS(track_tuple)` 或 `feedTupleR(track_tuple)`。
+    *   更新统计计数器：`tuples_processed_s_`, `tuples_processed_r_`, `total_latency_us_`。
 
 ## 4. 故障检测算法启动与运行
 
 ### 4.1 启动流程
-1.  **配置**: 指定检测方法（`method`: "zscore" 或 "vae"）、阈值（`threshold`）、窗口大小（`window_size`）。
-2.  **模型初始化**:
-    *   若选择 VAE，加载预训练模型或初始化 `TROCHPACK_VAE::LinearVAE`。
-    *   若选择 Z-Score，初始化统计缓冲区。
+1.  **加载插件**: 
+    *   通过 `PluginManager::loadPlugin("fault_detection", config)` 加载。
+    *   `PluginRegistry` 创建 `FaultDetectionAdapter` 实例。
+    
+2.  **配置解析**:
+    *   `method`: 检测方法（"zscore", "vae", "hybrid"）。
+    *   `threshold`: 异常阈值（Z-Score 标准差倍数或 VAE 重构误差阈值）。
+    *   `window_size`: 历史窗口大小（样本点数）。
+    
+3.  **模型初始化** (`initializeModel`):
+    *   **VAE 模式**: 加载预训练模型或初始化 `TROCHPACK_VAE::LinearVAE`（需要 PyTorch C++ 前端）。
+    *   **Z-Score 模式**: 初始化统计变量 `running_mean_`, `running_variance_`, `sample_count_`。
+    *   初始化历史缓冲区 `value_history_`（`std::deque<double>`）。
+    
+4.  **启动**: 
+    *   设置 `running_ = true`，准备接收数据。
+    *   可选：订阅 EventBus 的 `WINDOW_TRIGGERED` 事件以监控 PECJ 窗口结果。
 
 ### 4.2 运行逻辑
-*   **数据摄取**: 接收 `TimeSeriesData`。
-*   **滑动窗口维护**: 将新数据推入历史双端队列 (`std::deque`)，移除过期数据。
+*   **数据摄取**: 
+    *   `FaultDetectionAdapter::feedData(const TimeSeriesData& data)` 接收数据。
+    *   提取数值：`double value = data.as_double()`。
+    
+*   **滑动窗口维护**:
+    *   将新值推入 `value_history_`（`std::deque<double>`）。
+    *   若窗口大小超过 `window_size_`，移除最旧的数据点。
+    *   更新统计变量（`running_mean_`, `running_variance_`）。
+    
 *   **检测计算**:
-    *   **Z-Score**: 计算窗口内均值和标准差，判断当前值偏离程度。
-    *   **VAE**: 将窗口数据输入编码器-解码器，计算重构误差 (Reconstruction Error) 作为异常分数。
-*   **结果发布**: 若分数超过阈值，生成 `DetectionResult` 并通过 EventBus 发布告警。
+    *   **Z-Score 方法** (`detectZScore`):
+        1. 计算窗口内均值 $\mu$ 和标准差 $\sigma$。
+        2. 计算 Z 分数：$z = \frac{|x - \mu|}{\sigma}$。
+        3. 若 $z >$ `threshold`，标记为异常。
+        
+    *   **VAE 方法** (`detectVAE`):
+        1. 将窗口数据归一化为固定长度向量。
+        2. 输入 VAE 编码器获取潜在表示 $z$。
+        3. 解码器重构输入：$\hat{x} = \text{decoder}(z)$。
+        4. 计算重构误差：$e = \|\hat{x} - x\|_2$。
+        5. 若 $e >$ `threshold`，标记为异常。
+        
+    *   **Hybrid 方法**: 结合 Z-Score 和 VAE 的结果，取加权平均或逻辑 OR。
+    
+*   **结果记录与发布**:
+    *   构造 `DetectionResult` 结构体：
+        *   `timestamp`: 当前时间戳
+        *   `is_anomaly`: 布尔标志
+        *   `anomaly_score`: 异常分数
+        *   `severity`: 严重程度（NORMAL, WARNING, CRITICAL）
+    *   存入 `detection_history_`（限制最大历史记录数 `max_history_size_`）。
+    *   若检测到异常，通过 EventBus 发布 `ERROR_OCCURRED` 事件。
+    *   更新统计计数器：`total_samples_`, `anomalies_detected_`。
 
 ## 5. 中间状态维护
 
 系统中的中间状态分为三类，分别由不同层级维护：
 
 ### 5.1 PECJ 中间状态 (由 PECJ 库内部维护)
-*   **Join Buffers**: S 流和 R 流的待匹配元组缓冲区。
-*   **Watermark**: 当前处理的时间水位线，决定窗口何时关闭。
-*   **Join State**: 已匹配的元组对和未匹配的保留集。
-*   **维护方式**: 适配器不直接干预，仅通过 `feedData` 驱动状态更新，通过 `getStats` 获取状态摘要（如延迟、处理计数）。
+*   **Join Buffers**: 
+    *   S 流缓冲区：容量为 `sLen`（可配置）。
+    *   R 流缓冲区：容量为 `rLen`（可配置）。
+    *   存储待匹配的 `TrackTuple` 对象。
+    
+*   **Watermark**: 
+    *   当前处理的时间水位线，由 PECJ 内部的 `WaterMarker` 组件维护。
+    *   决定窗口何时关闭，允许最大乱序延迟为 `latenessMs`。
+    
+*   **Join State**: 
+    *   已匹配的元组对：存储在内部哈希表或 B-Tree 中。
+    *   未匹配的保留集：等待后续到达的元组。
+    *   变分推断状态：IMA、LinearSVI 等算子维护的均值/方差估计。
+    
+*   **维护方式**: 
+    *   适配器**不直接访问**这些内部状态，保持解耦。
+    *   仅通过 `feedTupleS/R` 驱动状态更新。
+    *   通过以下接口获取结果：
+        *   `getResult()`: 返回精确 Join 计数。
+        *   `getApproximateResult()`: 返回 AQP 估计（支持 IMA、MeanAQP 等算子）。
+        *   `getStats()`: 返回统计摘要（处理延迟、缓冲区使用率等）。
+        *   `getTimeBreakdown()`: 返回时间分解（Join 时间、推断时间、I/O 时间）。
 
 ### 5.2 故障检测中间状态 (由 Adapter 维护)
-*   **历史窗口**: `std::deque<TimeSeriesData>`，用于计算统计特征或作为 ML 模型输入。
-*   **模型参数**: VAE 的权重矩阵或统计模型的均值/方差。
+*   **历史窗口**: 
+    *   `value_history_`（`std::deque<double>`）：存储最近 `window_size_` 个数据点。
+    *   用于 Z-Score 统计计算或作为 VAE 模型输入。
+    *   线程安全：通过 `results_mutex_` 保护。
+    
+*   **统计变量**:
+    *   `running_mean_`: 滚动均值。
+    *   `running_variance_`: 滚动方差。
+    *   `sample_count_`: 已处理样本总数。
+    *   使用 Welford 在线算法更新，避免数值不稳定。
+    
+*   **ML 模型参数**:
+    *   `vae_model_`（`std::shared_ptr<TROCHPACK_VAE::LinearVAE>`）：VAE 模型实例。
+    *   编码器权重、解码器权重、潜在空间维度。
+    *   可选：与 PECJ 共享模型实例（通过配置指定）。
+    
+*   **检测历史**:
+    *   `detection_history_`（`std::deque<DetectionResult>`）：记录最近的检测结果。
+    *   最大容量：`max_history_size_`（默认 1000）。
+    *   用于查询历史异常、生成报告、计算准确率。
+    
 *   **维护方式**: 
-    *   内存驻留。
-    *   `updateModel()` 接口支持在线更新模型参数。
-    *   `reset()` 接口可清空历史状态。
+    *   内存驻留，线程安全（`stats_mutex_` 保护）。
+    *   `updateModel(training_data)`: 支持在线学习，更新 VAE 参数。
+    *   `reset()`: 清空历史窗口、重置统计变量、清除检测历史。
+    *   `getDetectionResults(count)`: 获取最近 N 条检测结果。
 
 ### 5.3 系统级中间状态 (由 sageTSDB 维护)
-*   **事件队列**: 待分发的异步事件。
-*   **插件状态机**: 各插件的 `Initialized`, `Running`, `Stopped` 状态。
-*   **资源监控**: 内存使用率、线程负载等。
+*   **事件队列** (`EventBus`):
+    *   `event_queue_`（`std::queue<Event>`）：待分发的异步事件。
+    *   使用 `queue_mutex_` 和 `cv_` 实现生产者-消费者模式。
+    *   支持的事件类型：`DATA_INGESTED`, `WINDOW_TRIGGERED`, `RESULT_READY`, `ERROR_OCCURRED`, `CUSTOM`。
+    
+*   **插件注册表** (`PluginRegistry`):
+    *   单例模式：`PluginRegistry::instance()`。
+    *   存储插件工厂函数：`std::map<std::string, PluginFactory>`。
+    *   自动注册机制：通过全局静态变量在程序启动时注册插件。
+    
+*   **插件实例管理** (`PluginManager`):
+    *   `plugins_`（`std::unordered_map<std::string, PluginPtr>`）：已加载的插件实例。
+    *   `plugin_enabled_`（`std::unordered_map<std::string, bool>`）：插件启用状态。
+    *   线程安全：`plugins_mutex_` 保护。
+    
+*   **插件状态机**:
+    *   每个插件维护独立的状态标志：
+        *   `initialized_`（`std::atomic<bool>`）：是否已初始化。
+        *   `running_`（`std::atomic<bool>`）：是否正在运行。
+    *   状态转换：`Unloaded` → `Initialized` → `Running` → `Stopped` → `Unloaded`。
+    
+*   **资源配置** (`ResourceConfig`):
+    *   `max_memory_mb`: 所有插件的最大内存限制（当前仅提示性，未强制执行）。
+    *   `thread_pool_size`: 建议的线程池大小（当前插件使用独立线程）。
+    *   `enable_zero_copy`: 是否启用零拷贝数据传递（默认 true）。
+    *   `event_queue_size`: EventBus 队列最大容量（用于背压控制）。
+    
+*   **事件订阅管理**:
+    *   `subscribers_`（`std::unordered_map<EventType, std::vector<Subscriber>>`）：按事件类型分组的订阅者列表。
+    *   `next_subscriber_id_`: 自增订阅 ID 生成器。
+    *   订阅者结构：`{id: int, callback: EventCallback}`。
 
-## 6. 示例配置 (config.csv / JSON)
+## 6. 示例配置 (PluginConfig / JSON)
 
+### 6.1 PECJ 插件配置
+```cpp
+PluginConfig pecj_config = {
+    // 窗口配置（时间单位：微秒 μs）
+    {"windowLen", "1000000"},      // 窗口长度：1秒 = 1,000,000 μs
+    {"slideLen", "500000"},        // 滑动步长：500毫秒
+    {"timeStep", "1000"},          // 内部时间步长：1毫秒（可选）
+    
+    // 乱序处理
+    {"latenessMs", "100"},         // 允许最大乱序延迟：100毫秒
+    
+    // 算子类型（必选）
+    {"operator", "IMA"},           // 可选值见下表
+    
+    // 缓冲区配置（元组数量）
+    {"sLen", "10000"},             // S流缓冲区大小
+    {"rLen", "10000"},             // R流缓冲区大小
+    
+    // 性能调优
+    {"threads", "4"}               // PECJ 内部并行线程数
+};
+```
+
+### 6.2 故障检测插件配置
+```cpp
+PluginConfig fault_config = {
+    // 检测方法
+    {"method", "zscore"},          // 可选: "zscore", "vae", "hybrid"
+    
+    // 窗口配置
+    {"window_size", "50"},         // 历史窗口：50个数据点
+    
+    // 阈值配置
+    {"threshold", "3.0"},          // Z-Score: 标准差倍数
+                                   // VAE: 重构误差阈值
+    
+    // VAE 专用配置（可选）
+    {"model_path", "/path/to/vae.pt"},   // 预训练模型路径
+    {"latent_dim", "16"},          // 潜在空间维度
+    {"learning_rate", "0.001"}     // 在线学习率
+};
+```
+
+### 6.3 资源管理配置
+```cpp
+PluginManager::ResourceConfig res_config;
+res_config.thread_pool_size = 8;         // 建议线程池大小
+res_config.max_memory_mb = 2048;         // 最大内存限制（MB）
+res_config.enable_zero_copy = true;      // 启用零拷贝（推荐）
+res_config.event_queue_size = 10000;     // EventBus 队列容量
+```
+
+### 6.4 完整 JSON 配置示例
 ```json
 {
-  "pecj": {
-    "windowLen": "1000000",   // 窗口长度 (us)
-    "slideLen": "500000",     // 滑动步长 (us)
-    "threads": "4",           // PECJ 内部线程数
-    "latenessMs": "100",      // 允许最大乱序延迟 (ms)
-    "operator": "IMA",        // 算子类型: IAWJ, IMA, MSWJ, AI, LinearSVI, MeanAQP, SHJ, PRJ
-    "sLen": "10000",          // S流缓冲区大小
-    "rLen": "10000"           // R流缓冲区大小
+  "resources": {
+    "thread_pool_size": 8,
+    "max_memory_mb": 2048,
+    "enable_zero_copy": true,
+    "event_queue_size": 10000
   },
-  "fault_detection": {
-    "method": "vae",          // 检测算法: zscore, vae, hybrid
-    "window_size": "100",     // 历史窗口点数
-    "threshold": "0.95"       // 异常阈值
+  "plugins": {
+    "pecj": {
+      "windowLen": "1000000",
+      "slideLen": "500000",
+      "operator": "IMA",
+      "threads": "4",
+      "latenessMs": "100",
+      "sLen": "10000",
+      "rLen": "10000"
+    },
+    "fault_detection": {
+      "method": "vae",
+      "window_size": "100",
+      "threshold": "0.95",
+      "model_path": "./models/vae_pretrained.pt"
+    }
   }
 }
 ```
 
 ## 7. 构建与运行指南
 
-### 7.1 构建 PECJ
+### 7.0 构建模式说明
+
+sageTSDB 支持两种 PECJ 集成模式：
+
+#### **Stub 模式（默认）**
+*   **用途**: 开发、测试、CI/CD 流水线
+*   **特点**: 
+    *   不依赖 PECJ 库和 PyTorch
+    *   `PECJAdapter` 仅提供接口桩（Stub）
+    *   可以编译、测试核心功能
+    *   打印配置信息但不执行实际 Join
+*   **启用方式**: 默认或 `cmake ..`
+
+#### **Full 模式（生产）**
+*   **用途**: 生产部署、性能测试、完整功能演示
+*   **特点**:
+    *   完整集成 PECJ 库（`OoOJoin::AbstractOperator`）
+    *   支持所有 8 种算子
+    *   需要 PyTorch C++ 前端
+    *   需要 C++20 和旧版 ABI（`_GLIBCXX_USE_CXX11_ABI=0`）
+*   **启用方式**: `cmake -DPECJ_FULL_INTEGRATION=ON ..`
+
+### 7.1 构建 PECJ（仅 Full 模式需要）
 
 ```bash
 # 1. 进入 PECJ 目录
 cd /path/to/PECJ
 
-# 2. 创建构建目录
+# 2. 安装依赖
+# PyTorch (必需)
+pip install torch
+
+# Log4cxx (可选，用于日志)
+sudo apt-get install liblog4cxx-dev
+
+# 3. 创建构建目录
 mkdir -p build && cd build
 
-# 3. 配置并构建
+# 4. 配置并构建
 cmake ..
 make -j$(nproc)
+
+# 5. 验证构建（可选）
+cd test
+./test_pecj
 ```
 
 ### 7.2 构建 sageTSDB (带 PECJ 集成)
@@ -145,10 +504,13 @@ cd /path/to/sageTSDB
 # 2. 创建构建目录
 mkdir -p build && cd build
 
-# 3. 配置 (Stub 模式 - 不需要 PECJ 库)
+# 3. 配置 (Stub 模式 - 不需要 PECJ 库，适合开发和测试)
 cmake -DPECJ_DIR=/path/to/PECJ ..
+# 或者不指定 PECJ_DIR（将使用默认 Stub 实现）
+cmake ..
 
-# 4. 配置 (Full 模式 - 需要 PECJ 库)
+# 4. 配置 (Full 模式 - 需要 PECJ 库和 PyTorch)
+# 确保已安装 PyTorch: pip install torch
 cmake -DPECJ_DIR=/path/to/PECJ -DPECJ_FULL_INTEGRATION=ON ..
 
 # 5. 构建
@@ -156,7 +518,24 @@ make -j$(nproc)
 
 # 6. 运行测试
 ctest --output-on-failure
+
+# 7. 运行集成演示（需要 PECJ 数据集）
+cd build/examples
+./integrated_demo \
+    --s-file /path/to/PECJ/benchmark/datasets/sTuple.csv \
+    --r-file /path/to/PECJ/benchmark/datasets/rTuple.csv \
+    --max-tuples 10000 \
+    --detection zscore \
+    --threshold 3.0
 ```
+
+**重要依赖说明**:
+*   **C++20 编译器**: GCC 10+ 或 Clang 12+
+*   **CMake 3.15+**
+*   **PyTorch C++ 前端** (Full 模式): 
+    *   通过 `python3 -c "import torch; print(torch.utils.cmake_prefix_path)"` 自动检测
+    *   或手动设置 `CMAKE_PREFIX_PATH`
+*   **ABI 兼容性**: 使用 `_GLIBCXX_USE_CXX11_ABI=0` 确保与 PyTorch 兼容
 
 ### 7.3 代码示例
 
@@ -176,23 +555,40 @@ int main() {
     res_config.thread_pool_size = 8;
     res_config.max_memory_mb = 2048;
     res_config.enable_zero_copy = true;
+    res_config.event_queue_size = 10000;
     plugin_mgr.setResourceConfig(res_config);
     
     // 3. 配置 PECJ
     PluginConfig pecj_config = {
-        {"windowLen", "1000000"},
-        {"slideLen", "500000"},
-        {"operator", "IMA"},
-        {"sLen", "10000"},
-        {"rLen", "10000"},
-        {"latenessMs", "100"}
+        {"windowLen", "1000000"},      // 1秒窗口 (微秒)
+        {"slideLen", "500000"},        // 500毫秒滑动 (微秒)
+        {"operator", "IMA"},           // IMA 算子
+        {"sLen", "10000"},             // S流缓冲区
+        {"rLen", "10000"},             // R流缓冲区
+        {"latenessMs", "100"},         // 100毫秒乱序容忍
+        {"threads", "4"}               // PECJ内部线程数
     };
     
-    // 4. 加载并启动 PECJ
+    // 4. 配置故障检测
+    PluginConfig fault_config = {
+        {"method", "zscore"},          // 检测方法
+        {"window_size", "50"},         // 历史窗口大小
+        {"threshold", "3.0"}           // 异常阈值
+    };
+    
+    // 5. 加载并启动插件
     plugin_mgr.loadPlugin("pecj", pecj_config);
+    plugin_mgr.loadPlugin("fault_detection", fault_config);
     plugin_mgr.startAll();
     
-    // 5. 喂入数据
+    // 6. 订阅事件（可选）
+    auto& event_bus = plugin_mgr.getEventBus();
+    int sub_id = event_bus.subscribe(EventType::WINDOW_TRIGGERED, 
+        [](const Event& evt) {
+            std::cout << "Window triggered from " << evt.source << std::endl;
+        });
+    
+    // 7. 喂入数据（零拷贝）
     for (int i = 0; i < 1000; i++) {
         auto data = std::make_shared<TimeSeriesData>();
         data->timestamp = i * 1000;
@@ -200,10 +596,14 @@ int main() {
         data->tags["stream"] = (i % 2 == 0) ? "S" : "R";
         data->tags["key"] = std::to_string(i % 10);
         
+        // 零拷贝分发给所有插件
         plugin_mgr.feedDataToAll(data);
     }
     
-    // 6. 获取结果
+    // 8. 等待处理完成
+    std::this_thread::sleep_for(std::chrono::seconds(2));
+    
+    // 9. 获取统计信息
     auto stats = plugin_mgr.getAllStats();
     for (const auto& [plugin, plugin_stats] : stats) {
         std::cout << "Plugin: " << plugin << std::endl;
@@ -212,71 +612,498 @@ int main() {
         }
     }
     
-    // 7. 停止
+    // 10. 获取故障检测结果（可选）
+    auto fd_plugin = std::dynamic_pointer_cast<FaultDetectionAdapter>(
+        plugin_mgr.getPlugin("fault_detection"));
+    if (fd_plugin) {
+        auto results = fd_plugin->getDetectionResults(10);
+        std::cout << "\nRecent anomalies: " << results.size() << std::endl;
+    }
+    
+    // 11. 停止并清理
+    event_bus.unsubscribe(sub_id);
     plugin_mgr.stopAll();
     
     return 0;
 }
 ```
 
-## 8. 架构图
+## 8. 插件注册与工厂模式
+
+### 8.1 插件注册机制
+sageTSDB 使用单例模式的 `PluginRegistry` 管理插件工厂函数：
+
+```cpp
+// 在 pecj_adapter.cpp 中自动注册
+namespace {
+    // 全局静态变量，程序启动时自动执行
+    bool pecj_registered = []() {
+        PluginRegistry::instance().register_plugin(
+            "pecj",
+            [](const PluginConfig& cfg) -> PluginPtr {
+                return std::make_shared<PECJAdapter>(cfg);
+            }
+        );
+        return true;
+    }();
+}
+```
+
+### 8.2 插件创建流程
+```cpp
+// 用户代码
+PluginManager plugin_mgr;
+plugin_mgr.loadPlugin("pecj", config);
+
+// 内部实现
+bool PluginManager::loadPlugin(const std::string& name, const PluginConfig& config) {
+    // 1. 通过 Registry 查找工厂函数
+    auto plugin = PluginRegistry::instance().create_plugin(name, config);
+    
+    // 2. 调用插件的 initialize() 方法
+    if (plugin->initialize(config)) {
+        // 3. 存储插件实例
+        plugins_[name] = plugin;
+        return true;
+    }
+    return false;
+}
+```
+
+### 8.3 添加新插件的步骤
+1.  **创建 Adapter 类**：继承 `IAlgorithmPlugin`
+2.  **实现接口方法**：`initialize()`, `feedData()`, `process()`, `getStats()` 等
+3.  **注册工厂函数**：在 `.cpp` 文件中添加全局静态注册代码
+4.  **更新 CMakeLists.txt**：将新源文件加入 `sage_tsdb_plugins` 库
+
+示例：
+```cpp
+// my_custom_adapter.cpp
+#include "my_custom_adapter.h"
+#include "sage_tsdb/plugins/plugin_registry.h"
+
+namespace {
+    bool custom_registered = []() {
+        PluginRegistry::instance().register_plugin(
+            "my_custom",
+            [](const PluginConfig& cfg) -> PluginPtr {
+                return std::make_shared<MyCustomAdapter>(cfg);
+            }
+        );
+        return true;
+    }();
+}
+
+// 实现类方法...
+```
+
+## 9. 架构图
 
 ```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                           sageTSDB System                                    │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│  ┌──────────────┐     ┌──────────────────────────────────────────────────┐ │
+│  │   External   │     │              PluginManager                        │ │
+│  │  Data Source │────▶│  ┌─────────────────────────────────────────────┐ │ │
+│  │ (CSV/Kafka)  │     │  │            EventBus                          │ │ │
+│  └──────────────┘     │  │  (worker_thread_, event_queue_)              │ │ │
+│                       │  │  Pub/Sub with Zero-Copy shared_ptr           │ │ │
+│                       │  └────────┬──────────────────────┬──────────────┘ │ │
+│                       │           │  EVENT_TYPES:        │                │ │
+│                       │           │  - DATA_INGESTED     │                │ │
+│                       │           │  - WINDOW_TRIGGERED  │                │ │
+│                       │           │  - RESULT_READY      │                │ │
+│                       │           │  - ERROR_OCCURRED    │                │ │
+│                       │           ▼                      ▼                │ │
+│                       │  ┌─────────────────┐     ┌──────────────────┐    │ │
+│                       │  │  PECJAdapter    │     │ FaultDetection   │    │ │
+│                       │  │  ┌────────────┐ │     │    Adapter       │    │ │
+│                       │  │  │data_queue_ │ │     │  ┌─────────────┐ │    │ │
+│                       │  │  │(S/R stream)│ │     │  │value_history│ │    │ │
+│                       │  │  └─────┬──────┘ │     │  │(deque)      │ │    │ │
+│                       │  │        ▼        │     │  └──────┬──────┘ │    │ │
+│                       │  │  worker_thread_ │     │         ▼        │    │ │
+│                       │  │        ▼        │     │   detectZScore() │    │ │
+│                       │  │ convertToTuple  │     │   detectVAE()    │    │ │
+│                       │  │        ▼        │     │         ▼        │    │ │
+│                       │  │  ┌──────────┐  │     │  DetectionResult │    │ │
+│                       │  │  │OoOJoin:: │  │     │         ▼        │    │ │
+│                       │  │  │Abstract  │  │     │  publish(ERROR_) │    │ │
+│                       │  │  │Operator  │  │     └──────────────────┘    │ │
+│                       │  │  │(PECJ Lib)│  │                             │ │
+│                       │  │  └────┬─────┘  │                             │ │
+│                       │  │       │        │                             │ │
+│                       │  │  ┌────▼─────┐  │  PluginRegistry (Singleton) │ │
+│                       │  │  │getResult()│  │  ┌───────────────────────┐ │ │
+│                       │  │  │getAQP()  │  │  │ Factory Functions:    │ │ │
+│                       │  │  └──────────┘  │  │ - "pecj" → PECJAdapter│ │ │
+│                       │  └─────────────────┘  │ - "fault_detection" → │ │ │
+│                       │                       │   FaultDetection...   │ │ │
+│                       └───────────────────────┴───────────────────────┘ │ │
+│                                                                          │ │
+│  ┌────────────────────────────────────────────────────────────────────┐ │ │
+│  │                      Data Flow (Zero-Copy)                          │ │ │
+│  │  shared_ptr<TimeSeriesData> ──▶ feedDataToAll()                    │ │ │
+│  │       │                                │                            │ │ │
+│  │       ├────▶ PECJAdapter::feedData()   │                            │ │ │
+│  │       │           ▼                     │                            │ │ │
+│  │       │     data_queue_.push()         │                            │ │ │
+│  │       │           ▼                     │                            │ │ │
+│  │       │     workerLoop() ──▶ convertToTrackTuple()                  │ │ │
+│  │       │           ▼                     │                            │ │ │
+│  │       │     feedTupleS() / feedTupleR() │                            │ │ │
+│  │       │                                 │                            │ │ │
+│  │       └────▶ FaultDetectionAdapter::feedData()                      │ │ │
+│  │                     ▼                                                │ │ │
+│  │             value_history_.push_back()                               │ │ │
+│  └────────────────────────────────────────────────────────────────────┘ │ │
+│                                                                          │ │
+└─────────────────────────────────────────────────────────────────────────┘ │
+                                                                              
+Window Visibility and Interaction:
 ┌─────────────────────────────────────────────────────────────────────────┐
-│                           sageTSDB System                                │
-├─────────────────────────────────────────────────────────────────────────┤
-│                                                                          │
-│  ┌──────────────┐     ┌──────────────────────────────────────────────┐  │
-│  │   Ingestion  │     │              PluginManager                    │  │
-│  │    Thread    │────▶│  ┌─────────────────────────────────────────┐ │  │
-│  └──────────────┘     │  │            EventBus                      │ │  │
-│                       │  │  (Pub/Sub, Zero-Copy shared_ptr)         │ │  │
-│                       │  └─────────────────────────────────────────┘ │  │
-│                       │                    │                          │  │
-│                       │         ┌──────────┴──────────┐               │  │
-│                       │         ▼                     ▼               │  │
-│                       │  ┌─────────────┐       ┌─────────────┐        │  │
-│                       │  │ PECJAdapter │       │ FaultDetect │        │  │
-│                       │  │             │       │   Adapter   │        │  │
-│                       │  │ ┌─────────┐ │       │             │        │  │
-│                       │  │ │ PECJ    │ │       │ ┌─────────┐ │        │  │
-│                       │  │ │Operator │ │       │ │ Z-Score │ │        │  │
-│                       │  │ │(OoOJoin)│ │       │ │   VAE   │ │        │  │
-│                       │  │ └─────────┘ │       │ └─────────┘ │        │  │
-│                       │  └─────────────┘       └─────────────┘        │  │
-│                       └──────────────────────────────────────────────┘  │
-│                                                                          │
-│  ┌──────────────────────────────────────────────────────────────────┐   │
-│  │                        Data Flow                                   │   │
-│  │  TimeSeriesData ──▶ convertToTrackTuple ──▶ feedTupleS/R          │   │
-│  │                                                                    │   │
-│  │  Window Result  ◀── getResult/getAQPResult ◀── PECJ Internal      │   │
-│  └──────────────────────────────────────────────────────────────────┘   │
-│                                                                          │
+│  S Stream: [t1, t2, t3, ...]                                            │
+│  R Stream: [t1', t2', t3', ...]                                         │
+│            │                                                             │
+│            ▼ feedTupleS/R                                                │
+│  ┌─────────────────────────────────────────────────────────────┐        │
+│  │  PECJ Internal Window [T, T+windowLen]                      │        │
+│  │  - S Buffer (size: sLen)                                    │        │
+│  │  - R Buffer (size: rLen)                                    │        │
+│  │  - Watermark: T + latenessMs                                │        │
+│  └─────────────────────┬───────────────────────────────────────┘        │
+│                        ▼ Watermark Trigger                              │
+│  ┌─────────────────────────────────────────────────────────────┐        │
+│  │  Join Result: {(s_i, r_j) | key_match && in_window}        │        │
+│  │  - Exact Count: getResult()                                 │        │
+│  │  - AQP Estimate: getApproximateResult()                     │        │
+│  └─────────────────────┬───────────────────────────────────────┘        │
+│                        ▼ publishWindowResult()                          │
+│  ┌─────────────────────────────────────────────────────────────┐        │
+│  │  EventBus: WINDOW_TRIGGERED / RESULT_READY                  │        │
+│  │  Payload: {join_count, aqp_result, window_id}               │        │
+│  └─────────────────────┬───────────────────────────────────────┘        │
+│                        ▼ Event Subscribers                              │
+│         ┌──────────────┴──────────────┐                                 │
+│         ▼                             ▼                                 │
+│  FaultDetection                  Custom Listeners                       │
+│  (Process join results)          (Logging, Metrics)                     │
 └─────────────────────────────────────────────────────────────────────────┘
-
-Window Visibility:
-┌───────────────────────────────────────────────────────────────┐
-│  S Stream: [t1, t2, t3, ...]     Window [T, T+W]              │
-│  R Stream: [t1', t2', t3', ...]                               │
-│                    ▼                                          │
-│            Watermark Trigger                                  │
-│                    ▼                                          │
-│  Join Result: {(s_i, r_j) | key_match && time_in_window}     │
-│                    ▼                                          │
-│  EventBus: WINDOW_TRIGGERED event ──▶ FaultDetection         │
-└───────────────────────────────────────────────────────────────┘
 ```
 
-## 9. 支持的 PECJ 算子类型
+## 10. 支持的 PECJ 算子类型
 
-| 算子名称 | 描述 | 适用场景 |
-|---------|------|---------|
-| IAWJ | Interval-Aware Window Join | 基础窗口连接 |
-| IMA | IMA-based AQP | 近似查询处理，支持乱序 |
-| MSWJ | Multi-Stream Window Join | 多流连接 |
-| AI | AI-enhanced Operator | 机器学习增强 |
-| LinearSVI | Linear Stochastic Variational Inference | 变分推断预测 |
-| MeanAQP | Mean-based AQP | 均值近似 |
-| SHJ | Symmetric Hash Join | 对称哈希连接 |
-| PRJ | Partitioned Range Join | 分区范围连接 |
+| 算子名称 | 枚举值 | 描述 | 适用场景 | 支持 AQP |
+|---------|--------|------|---------|----------|
+| IAWJ | `OperatorType::IAWJ` | Interval-Aware Window Join | 基础窗口连接，精确结果 | ❌ |
+| IMA | `OperatorType::IMA` | IMA-based AQP | 近似查询处理，支持乱序，推荐用于高吞吐场景 | ✅ |
+| MSWJ | `OperatorType::MSWJ` | Multi-Stream Window Join | 多流连接（>2 个流） | ❌ |
+| AI | `OperatorType::AI` | AI-enhanced Operator | 机器学习增强的 Join | ✅ |
+| LinearSVI | `OperatorType::LINEAR_SVI` | Linear Stochastic Variational Inference | 变分推断预测，适合概率查询 | ✅ |
+| MeanAQP | `OperatorType::MEAN_AQP` | Mean-based AQP | 均值近似，计算快速 | ✅ |
+| SHJ | `OperatorType::SHJ` | Symmetric Hash Join | 对称哈希连接，经典算法 | ❌ |
+| PRJ | `OperatorType::PRJ` | Partitioned Range Join | 分区范围连接，适合范围谓词 | ❌ |
+
+**算子选择建议**:
+*   **生产环境（高吞吐）**: `IMA` 或 `MeanAQP`（支持近似结果，性能最佳）
+*   **精确结果需求**: `SHJ` 或 `IAWJ`
+*   **研究/实验**: `LinearSVI` 或 `AI`（支持概率建模）
+*   **多流场景**: `MSWJ`
+
+**配置方式**:
+```cpp
+// 方式1：通过配置字符串
+PluginConfig config = {{"operator", "IMA"}};
+
+// 方式2：通过枚举设置（需要类型转换）
+auto adapter = std::dynamic_pointer_cast<PECJAdapter>(plugin);
+adapter->setOperatorType(PECJAdapter::OperatorType::IMA);
+```
+
+## 11. 性能监控与统计
+
+### 11.1 PECJ 适配器统计项
+`PECJAdapter::getStats()` 返回以下指标（通过 `std::atomic` 实现线程安全）：
+
+```cpp
+{
+    "tuples_processed_s": 5000,      // S流处理的元组数
+    "tuples_processed_r": 5000,      // R流处理的元组数
+    "join_results": 2500,            // Join结果总数
+    "total_latency_us": 12345,       // 总处理延迟（微秒）
+    "avg_latency_us": 1.23,          // 平均延迟 = total / (s+r)
+    "throughput_ktps": 800.5         // 吞吐量（千元组/秒）
+}
+```
+
+### 11.2 故障检测适配器统计项
+`FaultDetectionAdapter::getStats()` 返回：
+
+```cpp
+{
+    "total_samples": 10000,          // 总样本数
+    "anomalies_detected": 25,        // 检测到的异常数
+    "detection_rate": 0.0025,        // 异常率 = anomalies / total
+    "false_positives": 3,            // 假阳性（如果有标签）
+    "true_positives": 22,            // 真阳性
+    "current_threshold": 3.0         // 当前阈值
+}
+```
+
+### 11.3 获取实时统计
+
+```cpp
+// 方式1：获取所有插件统计
+auto all_stats = plugin_mgr.getAllStats();
+for (const auto& [plugin_name, stats] : all_stats) {
+    std::cout << "Plugin: " << plugin_name << std::endl;
+    for (const auto& [key, value] : stats) {
+        std::cout << "  " << key << ": " << value << std::endl;
+    }
+}
+
+// 方式2：获取特定插件的详细统计
+auto pecj = std::dynamic_pointer_cast<PECJAdapter>(
+    plugin_mgr.getPlugin("pecj"));
+if (pecj) {
+    auto time_breakdown = pecj->getTimeBreakdown();
+    // time_breakdown 可能包含：
+    // {"join_time_us", "inference_time_us", "io_time_us"}
+}
+
+// 方式3：获取故障检测历史
+auto fd = std::dynamic_pointer_cast<FaultDetectionAdapter>(
+    plugin_mgr.getPlugin("fault_detection"));
+if (fd) {
+    auto results = fd->getDetectionResults(10);  // 最近10条
+    for (const auto& result : results) {
+        if (result.is_anomaly) {
+            std::cout << "Anomaly at " << result.timestamp
+                     << " score=" << result.anomaly_score << std::endl;
+        }
+    }
+}
+```
+
+### 11.4 监控最佳实践
+
+1.  **定期轮询**: 在主循环中每隔 1-5 秒调用 `getAllStats()`
+2.  **导出到监控系统**: 将统计指标发送到 Prometheus/Grafana
+3.  **设置告警**: 基于异常率、延迟等指标设置阈值告警
+4.  **日志记录**: 使用 EventBus 订阅 `ERROR_OCCURRED` 事件记录异常
+
+```cpp
+// 示例：导出到 Prometheus
+auto stats = plugin_mgr.getAllStats();
+for (const auto& [plugin, metrics] : stats) {
+    for (const auto& [name, value] : metrics) {
+        prometheus_gauge.Set({{"plugin", plugin}, {"metric", name}}, value);
+    }
+}
+```
+
+## 12. 故障排查与常见问题
+
+### 12.1 编译问题
+
+**问题1：找不到 PyTorch 头文件**
+```
+fatal error: torch/torch.h: No such file or directory
+```
+**解决方案**:
+```bash
+# 检查 PyTorch 安装
+python3 -c "import torch; print(torch.__version__)"
+
+# 手动设置 CMAKE_PREFIX_PATH
+CMAKE_PREFIX_PATH=$(python3 -c "import torch; print(torch.utils.cmake_prefix_path)")
+cmake -DCMAKE_PREFIX_PATH=$CMAKE_PREFIX_PATH -DPECJ_FULL_INTEGRATION=ON ..
+```
+
+**问题2：ABI 不兼容错误**
+```
+undefined reference to `std::__cxx11::basic_string...`
+```
+**解决方案**: 确保使用旧版 ABI
+```cmake
+# CMakeLists.txt 中已包含
+add_compile_definitions(_GLIBCXX_USE_CXX11_ABI=0)
+```
+
+### 12.2 运行时问题
+
+**问题3：插件加载失败**
+```
+Failed to create plugin 'pecj'
+```
+**排查步骤**:
+1.  检查插件是否注册：`PluginRegistry::instance().list_plugins()`
+2.  检查配置是否正确：验证 `operator` 字段是否有效
+3.  查看日志：是否有初始化错误信息
+
+**问题4：数据未被处理**
+```
+tuples_processed_s = 0, tuples_processed_r = 0
+```
+**排查步骤**:
+1.  检查插件是否启动：`plugin_mgr.startAll()` 返回 true
+2.  检查数据流标识：`tags["stream"]` 是否设置为 "S" 或 "R"
+3.  检查工作线程：是否卡在队列等待中（可能是死锁）
+
+**问题5：Join 结果为 0**
+```
+join_results = 0
+```
+**可能原因**:
+1.  窗口配置错误：`windowLen` 太小，无法容纳匹配
+2.  Key 不匹配：检查 `tags["key"]` 或哈希函数
+3.  时间戳错误：`eventTime` 不在窗口范围内
+4.  Stub 模式：未启用 `PECJ_FULL_INTEGRATION`
+
+**调试技巧**:
+```cpp
+// 添加详细日志
+#define DEBUG_PECJ
+// 在 feedData 中打印
+std::cout << "Feed: ts=" << data.timestamp 
+          << " stream=" << (is_s ? "S" : "R")
+          << " key=" << data.tags["key"] << std::endl;
+```
+
+### 12.3 性能问题
+
+**问题6：吞吐量低**
+**优化建议**:
+1.  增加 PECJ 内部线程数：`{"threads", "8"}`
+2.  增大缓冲区：`{"sLen", "50000"}, {"rLen", "50000"}`
+3.  启用零拷贝：`res_config.enable_zero_copy = true`
+4.  使用 AQP 算子：`IMA` 或 `MeanAQP` 代替精确算子
+
+**问题7：内存占用过高**
+**排查方案**:
+1.  检查历史窗口大小：减小 `window_size`
+2.  限制事件队列：减小 `event_queue_size`
+3.  清理检测历史：调用 `reset()` 或减小 `max_history_size_`
+
+### 12.4 集成演示问题
+
+**问题8：找不到数据集文件**
+```
+[ERROR] Failed to open file: sTuple.csv
+```
+**解决方案**:
+```bash
+# 使用绝对路径或确保数据集存在
+./integrated_demo \
+    --s-file /absolute/path/to/PECJ/benchmark/datasets/sTuple.csv \
+    --r-file /absolute/path/to/PECJ/benchmark/datasets/rTuple.csv
+```
+
+**问题9：Segmentation Fault**
+**可能原因**:
+1.  Stub 模式下访问了 PECJ 指针（应有 `#ifdef` 保护）
+2.  多线程竞争条件（检查 mutex 使用）
+3.  插件未正确初始化就调用 `feedData`
+
+**调试方法**:
+```bash
+# 使用 GDB
+gdb ./integrated_demo
+run --s-file ... --r-file ...
+# 崩溃后
+bt  # 查看堆栈跟踪
+```
+
+### 12.5 获取帮助
+
+*   **查看文档**: `docs/` 目录下的所有 `.md` 文件
+*   **运行示例**: `examples/` 目录提供完整的工作示例
+*   **查看测试**: `tests/` 目录展示单元测试用法
+*   **GitHub Issues**: 提交问题到仓库的 Issues 页面
+
+## 13. 设计原则总结
+
+### 13.1 解耦设计
+*   **插件与核心分离**: PECJ 和 sageTSDB 通过适配器模式完全解耦，PECJ 无需了解 sageTSDB 内部结构。
+*   **接口标准化**: 所有插件实现统一的 `IAlgorithmPlugin` 接口，易于扩展。
+*   **依赖隔离**: 通过 `#ifdef PECJ_FULL_INTEGRATION` 条件编译，在 Stub 模式下完全不依赖 PECJ 库。
+
+### 13.2 性能优化
+*   **零拷贝传递**: 使用 `std::shared_ptr` 在插件间共享数据，避免内存拷贝。
+*   **异步处理**: 每个插件维护独立的工作线程和数据队列，避免阻塞主线程。
+*   **锁粒度优化**: 使用 `std::atomic` 记录统计信息，仅在必要时使用 mutex。
+
+### 13.3 可移植性
+*   **平台无关**: 仅依赖标准 C++20 和 POSIX API（`gettimeofday` 可替换）。
+*   **数据库无关**: `PECJAdapter` 可轻松移植到其他数据库系统（如 PostgreSQL, InfluxDB）。
+*   **构建灵活性**: 支持 Stub 模式和 Full 模式，适应不同部署环境。
+
+### 13.4 可扩展性
+*   **插件注册机制**: 通过工厂模式动态注册新插件，无需修改核心代码。
+*   **事件驱动架构**: EventBus 支持自定义事件类型和订阅者，易于添加新的交互逻辑。
+*   **配置驱动**: 所有参数通过 `PluginConfig` 传递，支持运行时调整。
+
+## 14. 未来工作与路线图
+
+### 14.1 短期计划（已完成或进行中）
+- [x] 基础插件架构实现
+- [x] PECJ 适配器（Stub + Full 模式）
+- [x] 故障检测适配器（Z-Score + VAE）
+- [x] EventBus 事件系统
+- [x] 集成演示程序
+- [ ] Python 绑定（通过 pybind11）
+- [ ] 性能基准测试套件
+- [ ] CI/CD 自动化测试
+
+### 14.2 中期计划
+- [ ] **持久化支持**: 集成 LSM-Tree 存储引擎，支持窗口状态快照
+- [ ] **分布式扩展**: 支持多节点部署，通过 gRPC 或 Kafka 分发数据
+- [ ] **更多算法插件**: 
+    - 时间序列预测（ARIMA, LSTM）
+    - 模式挖掘（Frequent Patterns）
+    - 聚类分析（K-Means, DBSCAN）
+- [ ] **监控面板**: 基于 Web 的实时监控界面（WebSocket + React）
+- [ ] **自适应调优**: 基于负载自动调整窗口大小、缓冲区等参数
+
+### 14.3 长期愿景
+- [ ] **SQL 查询接口**: 支持声明式流查询（类似 Apache Flink SQL）
+- [ ] **机器学习管道**: 与 MLflow 集成，支持模型训练、版本管理
+- [ ] **边缘计算**: 轻量级部署到 IoT 设备（ARM 架构）
+- [ ] **云原生**: Kubernetes Operator，支持自动伸缩和故障恢复
+
+## 15. 相关文档
+
+*   **[LSM_TREE_IMPLEMENTATION.md](LSM_TREE_IMPLEMENTATION.md)**: LSM-Tree 存储引擎实现细节
+*   **[PERSISTENCE.md](PERSISTENCE.md)**: 持久化机制设计
+*   **[QUICKSTART.md](../examples/QUICKSTART.md)**: 快速开始指南
+*   **[DEMO_SUMMARY.md](../examples/DEMO_SUMMARY.md)**: 演示程序说明
+*   **PECJ 论文**: [链接到原始论文或仓库]
+
+## 16. 贡献指南
+
+欢迎贡献代码、文档和问题反馈！
+
+**贡献流程**:
+1.  Fork 本仓库
+2.  创建特性分支：`git checkout -b feature/my-new-feature`
+3.  遵循代码风格（使用 `clang-format`）
+4.  添加单元测试（覆盖率 > 80%）
+5.  提交 Pull Request
+
+**代码规范**:
+*   使用 C++20 现代特性（`std::ranges`, `concepts` 等）
+*   注释使用 Doxygen 格式
+*   变量命名：`snake_case` for variables, `PascalCase` for types
+*   避免裸指针，优先使用智能指针
+
+**联系方式**:
+*   Email: [维护者邮箱]
+*   Slack/Discord: [社区链接]
+
+---
+
+**文档版本**: v1.0  
+**最后更新**: 2024-12-02  
+**维护者**: sageTSDB Team
