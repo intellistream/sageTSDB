@@ -78,6 +78,14 @@ void PECJAdapter::parseConfig(const PluginConfig& config) {
 // ============================================================================
 
 bool PECJAdapter::initialize(const PluginConfig& config) {
+    // Legacy initialize - defaults to Baseline mode (independent threads)
+    run_mode_ = RunMode::Baseline;
+    return initialize(config, ResourceRequest{}, nullptr);
+}
+
+bool PECJAdapter::initialize(const PluginConfig& config,
+                             const ResourceRequest& resource_request,
+                             std::shared_ptr<ResourceHandle> resource_handle) {
     std::lock_guard<std::mutex> lock(state_mutex_);
     
     if (initialized_.load()) {
@@ -85,7 +93,23 @@ bool PECJAdapter::initialize(const PluginConfig& config) {
     }
     
     config_ = config;
+    resource_request_ = resource_request;
+    resource_handle_ = resource_handle;
     parseConfig(config);
+    
+    // Determine run mode
+    if (resource_handle) {
+        run_mode_ = RunMode::Integrated;
+        std::cout << "✓ PECJ Adapter: Integrated mode (ResourceManager-controlled)" << std::endl;
+    } else {
+#ifdef PECJ_FULL_INTEGRATION
+        run_mode_ = RunMode::Baseline;
+        std::cout << "✓ PECJ Adapter: Baseline mode (independent threads)" << std::endl;
+#else
+        run_mode_ = RunMode::Stub;
+        std::cout << "✓ PECJ Adapter: Stub mode (no PECJ library)" << std::endl;
+#endif
+    }
     
     // Initialize PECJ operator
     if (!initializePECJ()) {
@@ -93,7 +117,7 @@ bool PECJAdapter::initialize(const PluginConfig& config) {
     }
     
     initialized_.store(true);
-    std::cout << "✓ PECJ Adapter initialized" << std::endl;
+    std::cout << "✓ PECJ Adapter initialized successfully" << std::endl;
     return true;
 }
 
@@ -190,11 +214,21 @@ bool PECJAdapter::start() {
     }
 #endif
     
-    // Start worker thread
     running_.store(true);
-    worker_thread_ = std::thread(&PECJAdapter::workerLoop, this);
     
-    std::cout << "✓ PECJ Adapter started" << std::endl;
+    // Mode-specific startup
+    if (run_mode_ == RunMode::Integrated && resource_handle_) {
+        // Integrated mode: submit worker task to ResourceManager
+        resource_handle_->submitTask([this]() {
+            workerLoop();
+        });
+        std::cout << "✓ PECJ Adapter started (Integrated mode)" << std::endl;
+    } else {
+        // Baseline/Stub mode: create independent thread
+        worker_thread_ = std::thread(&PECJAdapter::workerLoop, this);
+        std::cout << "✓ PECJ Adapter started (Baseline/Stub mode)" << std::endl;
+    }
+    
     return true;
 }
 
@@ -266,6 +300,7 @@ void PECJAdapter::feedData(const TimeSeriesData& data) {
     {
         std::lock_guard<std::mutex> lock(queue_mutex_);
         data_queue_.push({data, is_s_stream});
+        queue_length_.store(data_queue_.size());
     }
     queue_cv_.notify_one();
 }
@@ -507,6 +542,34 @@ std::map<std::string, int64_t> PECJAdapter::getTimeBreakdown() const {
 #endif
     
     return breakdown;
+}
+
+// ============================================================================
+// Resource Usage Reporting
+// ============================================================================
+
+ResourceUsage PECJAdapter::getResourceUsage() const {
+    ResourceUsage usage;
+    
+    // Thread usage
+    usage.threads_used = (run_mode_ == RunMode::Integrated) ? 
+        resource_request_.requested_threads : 1;
+    
+    // Memory estimation (simplified - should use actual RSS)
+    size_t est_memory = data_queue_.size() * sizeof(TimeSeriesData) * 2;
+    usage.memory_used_bytes = est_memory;
+    
+    // Queue length
+    usage.queue_length = queue_length_.load();
+    
+    // Processing metrics
+    usage.tuples_processed = tuples_processed_s_.load() + tuples_processed_r_.load();
+    
+    size_t total = tuples_processed_s_.load() + tuples_processed_r_.load();
+    usage.avg_latency_ms = (total > 0) ? 
+        (total_latency_us_.load() / static_cast<double>(total)) / 1000.0 : 0.0;
+    
+    return usage;
 }
 
 // ============================================================================

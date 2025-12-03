@@ -2,6 +2,7 @@
 
 #include "../plugin_interface.h"
 #include "../event_bus.h"
+#include "../resource_manager.h"
 #include <atomic>
 #include <condition_variable>
 #include <memory>
@@ -94,6 +95,21 @@ public:
     
     // IAlgorithmPlugin interface
     bool initialize(const PluginConfig& config) override;
+    
+    /**
+     * @brief Initialize with resource management (NEW API)
+     * @param config Plugin configuration
+     * @param resource_request Resource requirements
+     * @param resource_handle Allocated resource handle from ResourceManager
+     * @return true if initialization succeeds
+     * 
+     * In Integrated mode, tasks are submitted via resource_handle instead of
+     * creating independent threads. In Stub mode, resource_handle may be nullptr.
+     */
+    bool initialize(const PluginConfig& config, 
+                   const ResourceRequest& resource_request,
+                   std::shared_ptr<ResourceHandle> resource_handle);
+    
     void feedData(const TimeSeriesData& data) override;
     AlgorithmResult process() override;
     std::map<std::string, int64_t> getStats() const override;
@@ -146,6 +162,11 @@ public:
      * @brief Get current window configuration
      */
     const WindowConfig& getWindowConfig() const { return window_config_; }
+    
+    /**
+     * @brief Get current resource usage (for monitoring)
+     */
+    ResourceUsage getResourceUsage() const;
 
 private:
     /**
@@ -204,7 +225,7 @@ private:
     std::atomic<size_t> join_results_{0};
     std::atomic<int64_t> total_latency_us_{0};
     
-    // Worker thread
+    // Worker thread (Baseline mode only)
     std::thread worker_thread_;
     std::atomic<bool> running_{false};
     std::atomic<bool> initialized_{false};
@@ -216,6 +237,19 @@ private:
     
     // State mutex
     std::mutex state_mutex_;
+    
+    // Resource management (Integrated mode)
+    ResourceRequest resource_request_;
+    std::shared_ptr<ResourceHandle> resource_handle_;
+    std::atomic<uint64_t> queue_length_{0};
+    
+    // Mode detection
+    enum class RunMode {
+        Stub,        // No PECJ, stub behavior
+        Baseline,    // Independent threads (legacy)
+        Integrated   // ResourceManager-controlled
+    };
+    RunMode run_mode_ = RunMode::Stub;
 };
 
 } // namespace plugins
