@@ -112,6 +112,17 @@ if(TARGET sage_tsdb_plugins)
         test_utils
     )
     
+    add_executable(test_resource_manager
+      test_resource_manager.cpp
+    )
+    target_link_libraries(test_resource_manager
+      PRIVATE
+        sage_tsdb_plugins
+        sage_tsdb_core
+        GTest::gtest_main
+        test_utils
+    )
+    
     message(STATUS "Building plugin tests")
 endif()
 
@@ -131,3 +142,8 @@ endif()
 if(TARGET test_fault_detection_plugin)
     gtest_discover_tests(test_fault_detection_plugin)
 endif()
+
+if(TARGET test_resource_manager)
+    gtest_discover_tests(test_resource_manager)
+endif()
+

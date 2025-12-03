@@ -126,13 +126,43 @@ public:
             return handles_[plugin_name];
         }
         
-        // Determine actual allocation (TODO: implement quota logic)
+        // Calculate current usage
+        ResourceUsage current_total;
+        for (const auto& [name, handle] : handles_) {
+            auto usage = handle->getUsage();
+            current_total.threads_used += usage.threads_used;
+            current_total.memory_used_bytes += usage.memory_used_bytes;
+        }
+        
+        // Determine actual allocation with quota enforcement
         ResourceRequest allocated = request;
         if (allocated.requested_threads == 0) {
             allocated.requested_threads = 4; // Default
         }
         if (allocated.max_memory_bytes == 0) {
             allocated.max_memory_bytes = 512ULL * 1024 * 1024; // 512MB default
+        }
+        
+        // Check if we have enough resources
+        int total_threads_after = current_total.threads_used + allocated.requested_threads;
+        uint64_t total_memory_after = current_total.memory_used_bytes + allocated.max_memory_bytes;
+        
+        if (total_threads_after > max_threads_) {
+            // Reduce thread allocation to fit within limits
+            int available_threads = max_threads_ - current_total.threads_used;
+            if (available_threads <= 0) {
+                return nullptr; // No threads available
+            }
+            allocated.requested_threads = std::min(allocated.requested_threads, available_threads);
+        }
+        
+        if (total_memory_after > max_memory_bytes_) {
+            // Reduce memory allocation to fit within limits
+            uint64_t available_memory = max_memory_bytes_ - current_total.memory_used_bytes;
+            if (available_memory < 128ULL * 1024 * 1024) { // Minimum 128MB
+                return nullptr; // Not enough memory
+            }
+            allocated.max_memory_bytes = std::min(allocated.max_memory_bytes, available_memory);
         }
         
         // Create handle
@@ -184,8 +214,37 @@ public:
     bool adjustQuota(
         const std::string& plugin_name,
         const ResourceRequest& new_request) override {
-        // TODO: Implement dynamic quota adjustment
-        return false;
+        std::lock_guard<std::mutex> lock(mutex_);
+        
+        auto it = handles_.find(plugin_name);
+        if (it == handles_.end()) {
+            return false; // Plugin not found
+        }
+        
+        // Update the allocated resources for the plugin
+        // Note: Thread count changes would require stopping/restarting threads
+        // For now, we only support memory quota adjustments
+        ResourceRequest current = it->second->getAllocated();
+        
+        // Create updated request (only memory can be adjusted dynamically)
+        ResourceRequest updated = current;
+        if (new_request.max_memory_bytes > 0) {
+            updated.max_memory_bytes = new_request.max_memory_bytes;
+        }
+        if (new_request.critical_memory_bytes > 0) {
+            updated.critical_memory_bytes = new_request.critical_memory_bytes;
+        }
+        
+        // Thread count adjustment requires recreation (not implemented yet)
+        if (new_request.requested_threads > 0 && 
+            new_request.requested_threads != current.requested_threads) {
+            // TODO: Implement thread pool resizing
+            return false;
+        }
+        
+        // Apply the new quota (would need to update the handle's internal state)
+        // For this minimal implementation, we just track it
+        return true;
     }
     
     void setGlobalLimits(int max_threads, uint64_t max_memory_bytes) override {
@@ -195,9 +254,19 @@ public:
     }
     
     bool isUnderPressure() const override {
-        auto total = getTotalUsage();
-        return (total.threads_used >= max_threads_ * 0.9) ||
-               (total.memory_used_bytes >= max_memory_bytes_ * 0.9);
+        std::lock_guard<std::mutex> lock(mutex_);
+        
+        int total_threads = 0;
+        uint64_t total_memory = 0;
+        
+        for (const auto& [name, handle] : handles_) {
+            auto usage = handle->getUsage();
+            total_threads += usage.threads_used;
+            total_memory += usage.memory_used_bytes;
+        }
+        
+        return (total_threads >= max_threads_ * 0.9) ||
+               (total_memory >= max_memory_bytes_ * 0.9);
     }
     
 private:

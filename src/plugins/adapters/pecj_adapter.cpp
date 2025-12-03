@@ -85,7 +85,7 @@ bool PECJAdapter::initialize(const PluginConfig& config) {
 
 bool PECJAdapter::initialize(const PluginConfig& config,
                              const ResourceRequest& resource_request,
-                             std::shared_ptr<ResourceHandle> resource_handle) {
+                             ResourceHandle* resource_handle) {
     std::lock_guard<std::mutex> lock(state_mutex_);
     
     if (initialized_.load()) {
@@ -94,6 +94,7 @@ bool PECJAdapter::initialize(const PluginConfig& config,
     
     config_ = config;
     resource_request_ = resource_request;
+    // Store the raw pointer (we don't own it, ResourceManager does)
     resource_handle_ = resource_handle;
     parseConfig(config);
     

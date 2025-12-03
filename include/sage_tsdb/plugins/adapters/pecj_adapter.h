@@ -108,7 +108,7 @@ public:
      */
     bool initialize(const PluginConfig& config, 
                    const ResourceRequest& resource_request,
-                   std::shared_ptr<ResourceHandle> resource_handle);
+                   ResourceHandle* resource_handle) override;
     
     void feedData(const TimeSeriesData& data) override;
     AlgorithmResult process() override;
@@ -240,7 +240,7 @@ private:
     
     // Resource management (Integrated mode)
     ResourceRequest resource_request_;
-    std::shared_ptr<ResourceHandle> resource_handle_;
+    ResourceHandle* resource_handle_{nullptr};  // Non-owning pointer managed by PluginManager
     std::atomic<uint64_t> queue_length_{0};
     
     // Mode detection
