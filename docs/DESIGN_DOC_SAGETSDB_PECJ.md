@@ -1,201 +1,97 @@
-# sageTSDB + PECJ 集成设计文档
+# sageTSDB 管理型 PECJ 集成设计文档
 
-本文档详细描述了 sageTSDB 中间件与 PECJ (Predictive Error-bounded Computation for Joins) 及故障检测算法的集成设计、运行机制及状态管理。
+版本: v2.0 (Resource-Managed Architecture)
+更新日期: 2024-12-03
+分支: `pecj_resource_integration`
 
-## 1. 总体架构
+摘要
+---
+本文档描述将 PECJ 作为受控算子集成到 sageTSDB 的方案。核心原则是由 sageTSDB 统一管理所有运行资源（线程、内存、GPU、模型生命周期），并把传统的解耦（插件独立运行）方案保留为实验对比的 baseline。文档聚焦资源代管设计、最小接口契约、构建/运行开关与迁移步骤，删除冗余实现细节和示例代码。
 
-sageTSDB 采用插件化架构，通过 `PluginManager` 管理所有算法组件。PECJ 和故障检测算法均被封装为独立的插件（Adapter），通过统一的 `IAlgorithmPlugin` 接口与宿主系统交互，并通过 `EventBus` 进行解耦通信。
+设计目标
+---
+- 以 sageTSDB 的 ResourceManager 为中心，统一管理线程池、内存配额、设备（GPU）与模型加载。
+- 在构建时通过 CMake 参数决定集成深度：Stub（默认）、Integrated（资源代管/生产）、Baseline（原有解耦，仅用于对比）。
+- 保持外部接口简单：PluginManager 只需申请资源、发送数据、接收结果；PECJ 的内部实现通过适配器封装。
+- 强制可观测性：资源使用、队列长度、延迟、错误率必须上报。
 
-### 核心组件
-*   **PluginManager**: 负责插件的加载、初始化、生命周期管理及资源分配（线程池、内存限制）。通过 `PluginRegistry` 单例注册和创建插件实例。
-*   **EventBus**: 提供发布/订阅机制，实现插件间、插件与核心系统间的异步通信。使用独立的后台线程处理事件队列，支持零拷贝数据传递。
-*   **PECJAdapter**: 封装 PECJ 库（`OoOJoin::AbstractOperator`），负责数据格式转换（`TimeSeriesData` → `TrackTuple`）和 PECJ 算子管理。支持 Stub 模式（无 PECJ 依赖）和 Full 模式（完整集成）。
-*   **FaultDetectionAdapter**: 封装故障检测逻辑（Z-Score, VAE），负责实时异常监测。使用滑动窗口维护历史数据，支持在线模型更新。
+模式与优先级
+---
+1. Integrated（推荐，生产）
+     - sageTSDB 分配并强制执行资源配额（线程、内存、GPU），PECJ 在这些约束下运行。
+     - 目的：防止线程/内存爆炸，集中监控与运维控制。
+2. Stub（默认，开发/CI）
+     - 仅编译适配器接口与轻量 stub 行为，不依赖 PECJ 库，便于快速编译与单元测试。
+## 3. 集成方案及实施摘要
 
-## 2. 运行机制与多线程模型
+为保持简洁，本节以要点方式说明 Integrated（资源代管）模式的实现约定，并把原有解耦模式作为 baseline 仅用于实验对比。
 
-### 2.1 多线程执行模型
-系统采用分层多线程模型，确保高吞吐量和低延迟：
+核心约定：
+- 不修改 PECJ 外部 API；通过 `PECJAdapter` 做适配和受控运行。
+- 在 Integrated 模式下，ResourceManager 为每个插件分配 ResourceHandle，包含线程配额、内存上限和可见 GPU 列表。
+- 插件通过 ResourceHandle 在 sageTSDB 提供的受控执行上下文（线程池或任务队列）提交工作，不得自行无限制创建线程。
 
-1.  **主摄取线程 (Ingestion Thread)**:
-    *   负责接收外部数据流（如 CSV 文件、Kafka、网络端口）。
-    *   调用 `PluginManager::feedDataToAll()` 将数据分发给所有已启用的插件。
-    *   设计为非阻塞，使用 `std::shared_ptr<TimeSeriesData>` 实现零拷贝数据共享。
-    *   同时通过 `EventBus::publish_data()` 发布数据摄取事件。
+最小接口契约
+---
+PECJAdapter 必须实现：
+- bool init(const PluginConfig &cfg, const ResourceRequest &req);
+- void start();
+- void stop();
+- void onData(std::shared_ptr<TimeSeriesData> data);
+- PluginStatus status() const; // 返回资源使用、队列长度、uptime 与最后错误
 
-2.  **插件工作线程 (Plugin Worker Thread)**:
-    *   **每个插件维护自己的独立工作线程**（而非共享线程池）。
-    *   例如，`PECJAdapter::workerLoop()` 处理自己的数据队列。
-    *   使用条件变量 (`queue_cv_`) 进行线程同步，避免忙等待。
-    *   数据通过 `std::queue<std::pair<TimeSeriesData, bool>>` 异步缓冲。
+ResourceRequest 字段（示例）：
+```
+struct ResourceRequest {
+    int requested_threads = 0;
+    uint64_t max_memory_bytes = 0;
+    std::vector<int> gpu_ids; // optional
+    std::string model_path; // optional
+};
+```
 
-3.  **PECJ 内部线程**:
-    *   PECJ 算法本身支持多线程（配置项 `threads`）。
-    *   用于并行处理 Join 操作、状态更新和变分推断计算。
-    *   通过 `OoOJoin::AbstractOperator` 内部的线程池管理。
+CMake / 构建开关（建议）
+---
+- `-DPECJ_DIR=/path/to/PECJ`：PECJ 源或构建路径
+- `-DPECJ_FULL_INTEGRATION=ON|OFF`：是否在构建时链接 PECJ（默认 OFF）
+- `-DPECJ_MODE=Integrated|Stub|Baseline`：显式选择运行模式（优先级与上文一致）
+- `-DPECJ_MANAGED_THREADS=<n>`：当 >0 时建议 ResourceManager 将该线程数作为默认配额
 
-4.  **EventBus 分发线程**:
-    *   独立的后台线程（`EventBus::worker_thread_`），负责从事件队列中取出事件。
-    *   事件类型包括：`DATA_INGESTED`, `WINDOW_TRIGGERED`, `RESULT_READY`, `ERROR_OCCURRED`。
-    *   使用 `std::condition_variable` 实现高效的事件通知机制。
-    *   回调订阅者时支持按事件类型分发（`EventType` → `std::vector<Subscriber>`）。
+资源代管关键点
+---
+- 线程：使用 ResourceManager 提供的线程池或任务队列；插件应以任务/回调方式提交计算。
+- 内存：实现软/硬阈值监控；超阈值时触发降级策略。
+- GPU/模型：ResourceManager 控制 CUDA 可见设备并缓存模型实例，避免重复加载与 OOM。
+- 监控：每个插件按周期上报 metrics（threads_used, memory_used_bytes, queue_length, tuples_processed, avg_latency_ms）。
 
-### 2.2 Window 间的可见性与交互
-在流处理中，窗口（Window）状态的可见性通过以下机制保证：
+降级与运维
+---
+- 监控到资源异常时优先收紧配额，必要时切换到 Stub 模式并报警。
+- 提供运维 API 支持热启/停插件，以及查询/调整 ResourceRequest。
 
-*   **内部可见性 (PECJ)**: 
-    *   PECJ 内部维护滑动窗口（Sliding Window），配置参数为 `windowLen` 和 `slideLen`（单位：微秒）。
-    *   S 流和 R 流的元组通过 `feedTupleS()` 和 `feedTupleR()` 注入到 PECJ 算子。
-    *   PECJ 通过 Watermark 机制（`wmTag`, `latenessMs`）触发窗口计算，确保乱序数据在窗口关闭前被正确处理。
-    *   窗口内的 Join 结果可通过 `getResult()` 获取精确结果，或 `getApproximateResult()` 获取 AQP 估计。
+实施路线（最小可行步）
+---
+1. 定义 `resource_manager.h`（ResourceRequest / ResourceHandle / ResourceManager 接口）并提交草案。
+2. 调整 `pecj_adapter.h` 的 init 签名以接收 ResourceRequest；实现 Stub 版本并提交。
+3. 在 PluginManager 中集成 ResourceManager：加载插件时发起资源申请，并将 ResourceHandle 注入插件。
+4. 实现最小 ResourceManager（线程池 + 内存监控），运行 CI 验证（Stub 模式下）。
+5. 在含 PECJ 的环境中启用 Integrated 模式，验证资源限额与功能兼容性。
 
-    ## 3. 集成方案概览（目标与约束）
+验证要点（验收准则）
+---
+- 默认构建（不启用 PECJ）通过所有单元测试。
+- Integrated 模式下全局线程数与内存使用不超过配置阈值。
+- EventBus 语义与现有插件兼容，无需下游改造。
+- Baseline 与 Integrated 给出对比报告（吞吐 vs 延迟 vs 资源使用）。
 
-    目标：在不破坏现有解耦插件架构的前提下，由 sageTSDB 对 PECJ 的资源（线程、内存、模型文件）进行代管，并提供两种可选运行模式：
+后续工作与注意事项
+---
+- 补充 API 文档（函数签名、错误码、metrics schema）。
+- 在实现阶段优先以小步快频提交（Stub -> ResourceManager -> Integrated）。
+- CI 环境建议保留一个带 PECJ 的测试 runner 用于集成验证。
 
-    - Stub 模式（默认）：只编译并暴露 `PECJAdapter` 的接口和轻量 stub 实现，不依赖 PECJ 库；便于 CI、轻量部署与快速编译。
-    - Full 模式（可选，受预编译参数控制）：在构建时链接并启用 PECJ 库与其对 Torch 的依赖，由 sageTSDB 代管 PECJ 的运行时资源（线程池、内存配额、模型加载与生命周期）。
-
-    约束：
-
-    - 不修改 PECJ 的外部 API，尽量通过 Adapter 层实现适配与包装；
-    - 预编译控制（CMake 变量）必须能够在 cmake 配置阶段决定是否包含 PECJ 依赖（已在 `CMakeLists.txt` 中保留 `PECJ_FULL_INTEGRATION` 与 `PECJ_DIR` 选项）；
-    - 代管资源必须可配置、可限额（thread count、memory limit、GPUs），并且可以在运行时通过 `PluginManager` 或 `PluginRegistry` 查询与监控；
-    - 保持原有 EventBus 解耦通信与插件独立工作线程模型可选性：在 Full 模式下仍支持把 PECJ 的内部并行性限制在 sageTSDB 管理的线程池中，以避免线程数量爆炸。
-
-    ## 4. CMake / 构建策略（预编译参数）
-
-    已存在的选项（见 `CMakeLists.txt`）：
-
-    - `-DPECJ_DIR=/path/to/PECJ`：指向 PECJ 源或构建目录，用于寻找 include/lib；
-    - `-DPECJ_FULL_INTEGRATION=ON|OFF`（默认 OFF）：开启 Full 模式将触发 `find_package(Torch REQUIRED)` 与 `find_library(PECJ_LIBRARY ...)` 步骤；
-
-    建议：
-
-    - 保持现有变量兼容性，不增加破坏性改动；
-    - 增加一个显式资源控制宏 `-DPECJ_MANAGED_THREADS=<n>`（默认 0 = 由 PECJ 自管理），当设置为 >0 时，sageTSDB 将把该值传递给 `PECJAdapter`，用于创建受控线程池；
-    - 在 `CMakeLists.txt` 中增加清晰的诊断 message（已部分实现），并在找不到库时改为 fail 或继续构建 stub（视 CI 策略）；
-
-    构建示例：
-
-    cmake -S . -B build -DPECJ_DIR=/opt/PECJ -DPECJ_FULL_INTEGRATION=ON -DPECJ_MANAGED_THREADS=8
-
-    ## 5. 资源代管模型
-
-    设计要点：
-
-    - 由 `PluginManager` 在创建 `PECJAdapter` 实例时注入资源描述（`ResourceQuota`），包含：`max_threads`, `max_memory_bytes`, `gpu_ids`（可选）；
-    - `PECJAdapter` 在 Full 模式下负责把这些配额应用到 PECJ 算子和底层 Torch 环境：设置线程池大小、限制可用 GPU（通过环境变量或 Torch API）、在必要时通过 `std::thread` + `std::mutex` 或自有线程池实现并发控制；
-    - 在 Stub 模式下，`PECJAdapter` 使用空实现或轻量替代逻辑，并仍然向 `PluginManager` 报告相同的运行时指标（QPS、latency、memory_usage），便于上层监控透明；
-    - 内存配额通过 allocator hook（若 PECJ/Torch 支持）或运营时监控与回收策略结合实现；超限时触发 `PluginManager` 的回收或降级策略（例如切换到 Stub 模式或限制窗口大小）。
-
-    契约（简化版）：
-
-    - Input: `TimeSeriesData`（shared_ptr）或 EventBus 发布的 `DataEvent`；
-    - Output: 通过 `EventBus` 发布 `RESULT_READY` 或通过回调接口返回 `JoinResult`；
-    - Error: 在异常或资源耗尽时发布 `ERROR_OCCURRED`，包含 `ErrorCode` 与可恢复性标识；
-    - Lifecycle: `init(ResourceQuota)`, `start()`, `stop()`, `status()`。
-
-    ## 6. Adapter API 细化（`PECJAdapter` 合约）
-
-    接口草案（位于 `include/sage_tsdb/plugins/adapters/pecj_adapter.h`）：
-
-    - class PECJAdapter : public IAlgorithmPlugin {
-         // 初始化时注入资源配置与路径
-         bool init(const PluginConfig &cfg, const ResourceQuota &quota);
-         // 运行主循环或启动内部线程
-         void start() override;
-         void stop() override;
-         // 接收 TimeSeriesData（由 PluginManager 转发）
-         void onData(std::shared_ptr<TimeSeriesData> data) override;
-         // 用于测试/诊断：导出内部状态快照
-         PluginStatus status() const override;
-    };
-
-    实现注意事项：
-
-    - 在 Full 模式下，应将 PECJ 算子实例封装在 `std::unique_ptr<PECJOperator>`，并在 `init()` 中完成模型与参数加载；
-    - 将 PECJ 的线程分配映射到 `ResourceQuota::max_threads`（当 `PECJ_MANAGED_THREADS` > 0 优先使用该值）；
-    - 在 `onData()` 中做最小的数据转换开销，使用 `std::shared_ptr` 保证零拷贝传递，并将实际的 feed 操作交给内部工作线程处理；
-    - 所有对外暴露的异常都应被捕获并通过 `EventBus` 上报，而不直接抛出到宿主线程。
-
-    ## 7. 迁移与实施步骤（开发任务清单）
-
-    1. 在当前分支 `pecj_resource_integration` 上完成下列小步提交：
-        - 补充/完善 `DESIGN_DOC_SAGETSDB_PECJ.md`（当前改动）；
-        - 在 `include` 中确认 `pecj_adapter.h` 的接口并写入 `init(...)` 与 `ResourceQuota` 定义；
-        - 修改 `CMakeLists.txt`（如需）以暴露 `PECJ_MANAGED_THREADS` 并验证 `PECJ_FULL_INTEGRATION` 工作流；
-    2. 实现 `PECJAdapter` 的 Stub 版本（可立即启用），包括配置读取与事件发布；
-    3. 添加 `ResourceQuota` 与 `PluginConfig` 的序列化/反序列化支持（从配置文件或运行时 API）；
-    4. 在 Full 模式下实现 PECJ 的接入点：查找库、链接、加载算子、受控线程池；
-    5. 集成监控：在 `PluginManager` 中添加对插件资源使用的采样并在 `/metrics` 或日志中暴露；
-    6. 编写单元/集成测试：
-        - Stub 模式下的行为测试；
-        - Full 模式下与 PECJ 库的基本互操作测试（如果 CI 环境包含 PECJ）；
-    7. 性能与回归测试：评估在代管线程池与 PECJ 自管理模式下的吞吐/延迟差异，并记录结果。
-
-    ## 8. 回滚与降级策略
-
-    - 如果在运行时检测到资源超额或 PECJ 算子失败，`PluginManager` 应能自动将该插件从 Full 切换至 Stub（或暂停并报警）；
-    - 提供一个运维开关（runtime flag）允许动态禁用 PECJ Adapter，便于紧急回滚而无需重新构建。
-
-    ## 9. 分支与发布建议
-
-    - 使用当前分支 `pecj_resource_integration` 进行所有实现与测试；
-    - 完成后发起 MR 到 `main-dev`，并在描述中列出对 CMake 参数与运行时配置的变更；
-    - 合并策略：先在内部 CI（含 PECJ）通过后，再合并到 `main-dev`，最后合并到 `main`。
-
-    ## 10. 验证要点
-
-    - 构建覆盖：默认构建（无 PECJ）仍然通过；
-    - 开启 `-DPECJ_FULL_INTEGRATION=ON` 且 `PECJ_DIR` 正确时能成功链接并运行示例；
-    - 资源限额生效（模拟高负载并确认 `PluginManager` 限制线程/内存）；
-    - EventBus 的事件语义保持不变，现有插件不受影响。
-
-    ---
-
-    （文档末尾保留历史设计与实现细节）
-    
-*   **组件间可见性 (EventBus)**:
-    *   当 PECJ 完成一个窗口的计算时，工作线程检测到新的 Join 结果，会调用 `publishWindowResult()`。
-    *   发布 `WINDOW_TRIGGERED` 或 `RESULT_READY` 事件，携带 Join 计数和 AQP 结果。
-    *   故障检测插件或下游组件通过 `EventBus::subscribe()` 订阅这些事件。
-    *   **零拷贝 (Zero-Copy)**: 事件载荷使用 `std::shared_ptr<void>`，多个订阅者共享同一份数据，避免内存拷贝开销。
-
-*   **数据流识别**:
-    *   通过 `TimeSeriesData.tags["stream"]` 标识 S 或 R 流。
-    *   若未设置，默认使用时间戳奇偶性判断：`(timestamp/1000) % 2 == 0` → S 流，否则为 R 流。
-
-## 3. PECJ 算法启动与集成
-
-### 3.1 启动流程
-1.  **加载插件**: 
-    *   用户通过 `PluginManager::loadPlugin("pecj", config)` 请求加载。
-    *   `PluginManager` 调用 `PluginRegistry::instance().create_plugin("pecj", config)`。
-    *   `PluginRegistry` 使用工厂函数创建 `PECJAdapter` 实例。
-    
-2.  **初始化 (initialize)**:
-    *   `PECJAdapter::initialize()` 检查 `initialized_` 标志，避免重复初始化。
-    *   调用 `parseConfig()` 解析配置参数：
-        *   窗口参数：`windowLen`（微秒）, `slideLen`（微秒）, `latenessMs`（毫秒）
-        *   缓冲区：`sLen`, `rLen`（元组数量）
-        *   算子类型：`operator`（字符串，如 "IMA", "SHJ"）
-    *   调用 `initializePECJ()`：
-        *   **Full 模式**（`PECJ_FULL_INTEGRATION` 定义时）：
-            *   创建 `INTELLI::ConfigMap` 并设置参数。
-            *   通过 `OoOJoin::OperatorTable::findOperator()` 查找算子。
-            *   调用 `setConfig()`, `setWindow()`, `setBufferLen()`, `syncTimeStruct()` 配置算子。
-        *   **Stub 模式**（默认）：打印提示信息，不加载 PECJ 库。
-    
-3.  **启动 (start)**: 
-    *   检查 `initialized_` 和 `running_` 标志。
-    *   调用 PECJ 算子的 `start()` 方法（Full 模式）。
-    *   启动独立的工作线程 `worker_thread_`（`std::thread(&PECJAdapter::workerLoop, this)`）。
-    *   设置 `running_ = true`。
-
-### 3.2 数据流转
-*   **摄取入口**: `PECJAdapter::feedData(const TimeSeriesData& data)`
-    *   检查 `initialized_` 和 `running_` 标志，若未启动则忽略数据。
+---
+文档更新：本文件为精简版设计稿，冗余细节与历史实现保留在 `DESIGN_DOC_SAGETSDB_PECJ.md.backup`。
     *   根据 `data.tags["stream"]` 判断流类型（S 或 R）。
     *   若未设置 stream 标签，使用时间戳奇偶性：`(timestamp/1000) % 2 == 0` → S 流。
     *   将数据和流类型标记 `(data, is_s_stream)` 推入异步队列 `data_queue_`。
