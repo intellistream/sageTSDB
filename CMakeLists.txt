@@ -111,6 +111,7 @@ if(BUILD_PLUGINS)
         if(EXISTS "${PECJ_INCLUDE_DIR}")
             add_library(sage_tsdb_plugins
                 src/plugins/plugin_manager.cpp
+                src/plugins/resource_manager.cpp
                 src/plugins/adapters/pecj_adapter.cpp
                 src/plugins/adapters/fault_detection_adapter.cpp
             )

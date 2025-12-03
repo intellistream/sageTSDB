@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../core/time_series_data.h"
+#include "resource_manager.h"
 #include <functional>
 #include <map>
 #include <memory>
@@ -48,6 +49,23 @@ public:
      * @return true if initialization succeeds
      */
     virtual bool initialize(const PluginConfig& config) = 0;
+    
+    /**
+     * @brief Initialize the plugin with ResourceManager support (optional)
+     * @param config Configuration parameters
+     * @param request Resource requirements
+     * @param handle ResourceHandle for submitting tasks
+     * @return true if initialization succeeds, false to fallback to legacy init
+     * 
+     * Default implementation returns false, forcing fallback to initialize(config).
+     * Plugins supporting ResourceManager should override this method.
+     */
+    virtual bool initialize(const PluginConfig& config, 
+                          const ResourceRequest& request,
+                          ResourceHandle* handle) {
+        // Default: not supported, fallback to legacy
+        return false;
+    }
     
     /**
      * @brief Feed time series data to the plugin

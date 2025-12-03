@@ -4,6 +4,7 @@
 # Plugin Manager
 add_library(sage_tsdb_plugins
     plugin_manager.cpp
+    resource_manager.cpp
     adapters/pecj_adapter.cpp
     adapters/fault_detection_adapter.cpp
 )
