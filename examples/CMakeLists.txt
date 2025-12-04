@@ -81,34 +81,16 @@ if(TARGET sage_tsdb_plugins)
             ${CMAKE_SOURCE_DIR}/include
     )
     
-    # 4. Integrated Mode Test - ResourceManager verification
-    add_executable(test_integrated_mode
-        test_integrated_mode.cpp
-    )
-    
-    target_link_libraries(test_integrated_mode
-        PRIVATE
-            sage_tsdb_core
-            sage_tsdb_plugins
-    )
-    
-    target_include_directories(test_integrated_mode
-        PRIVATE
-            ${CMAKE_SOURCE_DIR}/include
-    )
-    
     # Add PECJ demos to install targets
     list(APPEND EXAMPLE_TARGETS 
         pecj_replay_demo 
         integrated_demo 
         performance_benchmark
-        test_integrated_mode
     )
     
     message(STATUS "  - pecj_replay_demo")
     message(STATUS "  - integrated_demo")
     message(STATUS "  - performance_benchmark")
-    message(STATUS "  - test_integrated_mode")
     
     # Copy demo configuration files
     configure_file(

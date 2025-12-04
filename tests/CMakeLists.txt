@@ -123,6 +123,16 @@ if(TARGET sage_tsdb_plugins)
         test_utils
     )
     
+    # Integrated mode test (uses ResourceManager with PECJ)
+    add_executable(test_integrated_mode
+      test_integrated_mode.cpp
+    )
+    target_link_libraries(test_integrated_mode
+      PRIVATE
+        sage_tsdb_plugins
+        sage_tsdb_core
+    )
+    
     message(STATUS "Building plugin tests")
 endif()
 
@@ -146,4 +156,6 @@ endif()
 if(TARGET test_resource_manager)
     gtest_discover_tests(test_resource_manager)
 endif()
+
+# Note: test_integrated_mode is not registered with CTest as it's a manual verification tool
 

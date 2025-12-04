@@ -1,176 +1,178 @@
 {
-  "demo_configurations": {
-    "basic_replay": {
-      "description": "基础 PECJ 重放演示",
-      "program": "pecj_replay_demo",
-      "data": {
-        "s_file": "../../../PECJ/benchmark/datasets/sTuple.csv",
-        "r_file": "../../../PECJ/benchmark/datasets/rTuple.csv",
-        "max_tuples": 5000
-      },
-      "pecj": {
-        "operator": "IMA",
-        "window_len_ms": 1000,
-        "slide_len_ms": 500,
-        "lateness_ms": 100,
-        "threads": 4
-      },
-      "display": {
-        "verbose": true,
-        "realtime_replay": false,
-        "display_interval": 500
-      }
+    "demo_configurations": {
+        "basic_replay": {
+            "description": "基础 PECJ 重放演示",
+            "program": "pecj_replay_demo",
+            "data": {
+                "s_file": "../../../PECJ/benchmark/datasets/sTuple.csv",
+                "r_file": "../../../PECJ/benchmark/datasets/rTuple.csv",
+                "max_tuples": 5000
+            },
+            "pecj": {
+                "operator": "IMA",
+                "window_len_ms": 1000,
+                "slide_len_ms": 500,
+                "lateness_ms": 100,
+                "threads": 4
+            },
+            "display": {
+                "verbose": true,
+                "realtime_replay": false,
+                "display_interval": 500
+            }
+        },
+        "integrated_pipeline": {
+            "description": "PECJ + 故障检测集成演示",
+            "program": "integrated_demo",
+            "data": {
+                "s_file": "../../../PECJ/benchmark/datasets/sTuple.csv",
+                "r_file": "../../../PECJ/benchmark/datasets/rTuple.csv",
+                "max_tuples": 10000
+            },
+            "pecj": {
+                "operator": "IMA",
+                "window_len_ms": 1000,
+                "slide_len_ms": 500,
+                "threads": 4
+            },
+            "fault_detection": {
+                "method": "zscore",
+                "window_size": 50,
+                "threshold": 3.0
+            },
+            "output": {
+                "file": "integrated_results.txt",
+                "enable_alerts": true
+            }
+        },
+        "performance_test": {
+            "description": "性能基准测试",
+            "program": "performance_benchmark",
+            "data": {
+                "s_file": "../../../PECJ/benchmark/datasets/sTuple.csv",
+                "r_file": "../../../PECJ/benchmark/datasets/rTuple.csv"
+            },
+            "benchmark": {
+                "operators": [
+                    "IMA",
+                    "SHJ",
+                    "MSWJ"
+                ],
+                "tuple_counts": [
+                    1000,
+                    5000,
+                    10000,
+                    50000
+                ],
+                "thread_counts": [
+                    1,
+                    2,
+                    4,
+                    8
+                ],
+                "repeat_count": 3,
+                "output_csv": "benchmark_results.csv"
+            }
+        },
+        "stock_data_demo": {
+            "description": "股票数据演示（低延迟）",
+            "program": "integrated_demo",
+            "data": {
+                "s_file": "../../../PECJ/benchmark/datasets/stock/sb_1000ms_1tLowDelayData_short.csv",
+                "r_file": "../../../PECJ/benchmark/datasets/stock/cj_1000ms_1tLowDelayData_short.csv",
+                "max_tuples": 0
+            },
+            "pecj": {
+                "operator": "IMA",
+                "window_len_ms": 1000,
+                "slide_len_ms": 500,
+                "threads": 4
+            },
+            "fault_detection": {
+                "method": "zscore",
+                "window_size": 100,
+                "threshold": 2.5
+            }
+        },
+        "high_throughput_demo": {
+            "description": "高吞吐量演示（SHJ 算子）",
+            "program": "pecj_replay_demo",
+            "data": {
+                "s_file": "../../../PECJ/benchmark/datasets/sTuple.csv",
+                "r_file": "../../../PECJ/benchmark/datasets/rTuple.csv",
+                "max_tuples": 50000
+            },
+            "pecj": {
+                "operator": "SHJ",
+                "window_len_ms": 500,
+                "slide_len_ms": 250,
+                "threads": 8
+            },
+            "display": {
+                "verbose": false,
+                "display_interval": 5000
+            }
+        },
+        "realtime_simulation": {
+            "description": "实时模拟演示（按真实时间戳重放）",
+            "program": "pecj_replay_demo",
+            "data": {
+                "s_file": "../../../PECJ/benchmark/datasets/sTuple.csv",
+                "r_file": "../../../PECJ/benchmark/datasets/rTuple.csv",
+                "max_tuples": 2000
+            },
+            "pecj": {
+                "operator": "MSWJ",
+                "window_len_ms": 1000,
+                "slide_len_ms": 500,
+                "threads": 4
+            },
+            "display": {
+                "verbose": true,
+                "realtime_replay": true,
+                "display_interval": 100
+            }
+        }
     },
-    
-    "integrated_pipeline": {
-      "description": "PECJ + 故障检测集成演示",
-      "program": "integrated_demo",
-      "data": {
-        "s_file": "../../../PECJ/benchmark/datasets/sTuple.csv",
-        "r_file": "../../../PECJ/benchmark/datasets/rTuple.csv",
-        "max_tuples": 10000
-      },
-      "pecj": {
-        "operator": "IMA",
-        "window_len_ms": 1000,
-        "slide_len_ms": 500,
-        "threads": 4
-      },
-      "fault_detection": {
-        "method": "zscore",
-        "window_size": 50,
-        "threshold": 3.0
-      },
-      "output": {
-        "file": "integrated_results.txt",
-        "enable_alerts": true
-      }
+    "preset_commands": {
+        "quick_demo": "./examples/pecj_replay_demo --max-tuples 5000",
+        "full_pipeline": "./examples/integrated_demo --max-tuples 10000 --detection zscore --threshold 3.0",
+        "benchmark": "./examples/performance_benchmark --output benchmark_results.csv",
+        "stock_low_latency": "./examples/integrated_demo --s-file ../../../PECJ/benchmark/datasets/stock/sb_1000ms_1tLowDelayData_short.csv --r-file ../../../PECJ/benchmark/datasets/stock/cj_1000ms_1tLowDelayData_short.csv",
+        "high_throughput": "./examples/pecj_replay_demo --max-tuples 50000 --operator SHJ --threads 8"
     },
-    
-    "performance_test": {
-      "description": "性能基准测试",
-      "program": "performance_benchmark",
-      "data": {
-        "s_file": "../../../PECJ/benchmark/datasets/sTuple.csv",
-        "r_file": "../../../PECJ/benchmark/datasets/rTuple.csv"
-      },
-      "benchmark": {
-        "operators": ["IMA", "SHJ", "MSWJ"],
-        "tuple_counts": [1000, 5000, 10000, 50000],
-        "thread_counts": [1, 2, 4, 8],
-        "repeat_count": 3,
-        "output_csv": "benchmark_results.csv"
-      }
+    "resource_recommendations": {
+        "small_demo": {
+            "description": "适用于快速演示（< 5 分钟）",
+            "max_tuples": 5000,
+            "threads": 2,
+            "memory_mb": 512
+        },
+        "medium_demo": {
+            "description": "适用于功能展示（5-10 分钟）",
+            "max_tuples": 10000,
+            "threads": 4,
+            "memory_mb": 1024
+        },
+        "large_demo": {
+            "description": "适用于性能测试（10-30 分钟）",
+            "max_tuples": 50000,
+            "threads": 8,
+            "memory_mb": 2048
+        }
     },
-    
-    "stock_data_demo": {
-      "description": "股票数据演示（低延迟）",
-      "program": "integrated_demo",
-      "data": {
-        "s_file": "../../../PECJ/benchmark/datasets/stock/sb_1000ms_1tLowDelayData_short.csv",
-        "r_file": "../../../PECJ/benchmark/datasets/stock/cj_1000ms_1tLowDelayData_short.csv",
-        "max_tuples": 0
-      },
-      "pecj": {
-        "operator": "IMA",
-        "window_len_ms": 1000,
-        "slide_len_ms": 500,
-        "threads": 4
-      },
-      "fault_detection": {
-        "method": "zscore",
-        "window_size": 100,
-        "threshold": 2.5
-      }
-    },
-    
-    "high_throughput_demo": {
-      "description": "高吞吐量演示（SHJ 算子）",
-      "program": "pecj_replay_demo",
-      "data": {
-        "s_file": "../../../PECJ/benchmark/datasets/sTuple.csv",
-        "r_file": "../../../PECJ/benchmark/datasets/rTuple.csv",
-        "max_tuples": 50000
-      },
-      "pecj": {
-        "operator": "SHJ",
-        "window_len_ms": 500,
-        "slide_len_ms": 250,
-        "threads": 8
-      },
-      "display": {
-        "verbose": false,
-        "display_interval": 5000
-      }
-    },
-    
-    "realtime_simulation": {
-      "description": "实时模拟演示（按真实时间戳重放）",
-      "program": "pecj_replay_demo",
-      "data": {
-        "s_file": "../../../PECJ/benchmark/datasets/sTuple.csv",
-        "r_file": "../../../PECJ/benchmark/datasets/rTuple.csv",
-        "max_tuples": 2000
-      },
-      "pecj": {
-        "operator": "MSWJ",
-        "window_len_ms": 1000,
-        "slide_len_ms": 500,
-        "threads": 4
-      },
-      "display": {
-        "verbose": true,
-        "realtime_replay": true,
-        "display_interval": 100
-      }
+    "troubleshooting": {
+        "file_not_found": {
+            "error": "Failed to open file",
+            "solution": "使用绝对路径或检查相对路径是否正确"
+        },
+        "low_throughput": {
+            "error": "吞吐量低于预期",
+            "solution": "增加线程数（--threads）或减少数据量"
+        },
+        "out_of_memory": {
+            "error": "内存不足",
+            "solution": "减少 max_tuples 或调整窗口大小"
+        }
     }
-  },
-  
-  "preset_commands": {
-    "quick_demo": "./examples/pecj_replay_demo --max-tuples 5000",
-    
-    "full_pipeline": "./examples/integrated_demo --max-tuples 10000 --detection zscore --threshold 3.0",
-    
-    "benchmark": "./examples/performance_benchmark --output benchmark_results.csv",
-    
-    "stock_low_latency": "./examples/integrated_demo --s-file ../../../PECJ/benchmark/datasets/stock/sb_1000ms_1tLowDelayData_short.csv --r-file ../../../PECJ/benchmark/datasets/stock/cj_1000ms_1tLowDelayData_short.csv",
-    
-    "high_throughput": "./examples/pecj_replay_demo --max-tuples 50000 --operator SHJ --threads 8"
-  },
-  
-  "resource_recommendations": {
-    "small_demo": {
-      "description": "适用于快速演示（< 5 分钟）",
-      "max_tuples": 5000,
-      "threads": 2,
-      "memory_mb": 512
-    },
-    "medium_demo": {
-      "description": "适用于功能展示（5-10 分钟）",
-      "max_tuples": 10000,
-      "threads": 4,
-      "memory_mb": 1024
-    },
-    "large_demo": {
-      "description": "适用于性能测试（10-30 分钟）",
-      "max_tuples": 50000,
-      "threads": 8,
-      "memory_mb": 2048
-    }
-  },
-  
-  "troubleshooting": {
-    "file_not_found": {
-      "error": "Failed to open file",
-      "solution": "使用绝对路径或检查相对路径是否正确"
-    },
-    "low_throughput": {
-      "error": "吞吐量低于预期",
-      "solution": "增加线程数（--threads）或减少数据量"
-    },
-    "out_of_memory": {
-      "error": "内存不足",
-      "solution": "减少 max_tuples 或调整窗口大小"
-    }
-  }
 }
