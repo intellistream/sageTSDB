@@ -167,6 +167,67 @@ public:
      * @return true if close to global limits (triggers degradation)
      */
     virtual bool isUnderPressure() const = 0;
+    
+    // ========== Compute Engine Resource Management ==========
+    
+    /**
+     * @brief Allocate resources for a compute engine
+     * @param compute_name Compute engine identifier (e.g., "pecj_engine")
+     * @param request Resource requirements
+     * @return Handle to allocated resources, or nullptr if allocation fails
+     * 
+     * This is a specialized allocation method for compute engines like PECJ.
+     * Key differences from plugin allocation:
+     * - Stricter resource isolation (separate quota pool)
+     * - Task-based execution (submitTask instead of continuous threads)
+     * - Integration with ComputeStateManager for state persistence
+     * 
+     * Thread-safe. May block if resources are temporarily unavailable.
+     * 
+     * Example:
+     *   ResourceRequest req;
+     *   req.requested_threads = 4;
+     *   req.max_memory_bytes = 2ULL * 1024 * 1024 * 1024;  // 2GB
+     *   auto handle = rm->allocateForCompute("pecj_engine", req);
+     *   if (handle) {
+     *       handle->submitTask([](){ // compute task
+     *       });
+     *   }
+     */
+    virtual std::shared_ptr<ResourceHandle> allocateForCompute(
+        const std::string& compute_name,
+        const ResourceRequest& request) = 0;
+    
+    /**
+     * @brief Release compute engine resources
+     * @param compute_name Compute engine identifier
+     * 
+     * Usually called automatically when ResourceHandle is destroyed.
+     */
+    virtual void releaseCompute(const std::string& compute_name) = 0;
+    
+    /**
+     * @brief Query resource usage for a compute engine
+     * @param compute_name Compute engine identifier
+     * @return Current usage metrics, or default if not found
+     */
+    virtual ResourceUsage getComputeUsage(const std::string& compute_name) const = 0;
+    
+    /**
+     * @brief Force throttle a compute engine
+     * @param compute_name Compute engine identifier
+     * @param factor Throttle factor (0.0 = pause, 1.0 = no throttle)
+     * 
+     * Used when compute engine consumes too many resources.
+     * Example: factor = 0.5 means reduce throughput to 50%.
+     */
+    virtual void throttleCompute(const std::string& compute_name, double factor) = 0;
+    
+    /**
+     * @brief List all active compute engines
+     * @return Vector of compute engine names
+     */
+    virtual std::vector<std::string> listComputeEngines() const = 0;
 };
 
 /**

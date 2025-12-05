@@ -75,11 +75,15 @@ if(SAGE_TSDB_ENABLE_PECJ)
         
         # Build deep integration mode
         set(PECJ_ENGINE_SOURCES
-            ${CMAKE_CURRENT_SOURCE_DIR}/src/compute/pecj_compute_engine.cpp
+            pecj_compute_engine.cpp
+            compute_state_manager.cpp
+            window_scheduler.cpp
         )
         
         set(PECJ_ENGINE_HEADERS
-            ${CMAKE_CURRENT_SOURCE_DIR}/include/sage_tsdb/compute/pecj_compute_engine.h
+            ${CMAKE_CURRENT_SOURCE_DIR}/../../include/sage_tsdb/compute/pecj_compute_engine.h
+            ${CMAKE_CURRENT_SOURCE_DIR}/../../include/sage_tsdb/compute/compute_state_manager.h
+            ${CMAKE_CURRENT_SOURCE_DIR}/../../include/sage_tsdb/compute/window_scheduler.h
         )
         
         add_library(sage_tsdb_pecj_engine STATIC

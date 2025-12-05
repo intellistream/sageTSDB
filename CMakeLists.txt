@@ -46,8 +46,41 @@ add_library(sage_tsdb_core
     src/core/time_series_db.cpp
     src/core/storage_engine.cpp
     src/core/lsm_tree.cpp
+    src/core/stream_table.cpp
+    src/core/join_result_table.cpp
+    src/core/table_manager.cpp
     src/utils/config.cpp
 )
+
+# PECJ Integration Mode selection
+option(SAGE_TSDB_ENABLE_PECJ "Enable PECJ integration" OFF)
+set(PECJ_MODE "INTEGRATED" CACHE STRING "PECJ integration mode: PLUGIN or INTEGRATED")
+
+# Compute library (PECJ Deep Integration)
+if(SAGE_TSDB_ENABLE_PECJ AND PECJ_MODE STREQUAL "INTEGRATED")
+    message(STATUS "Building PECJ Compute Engine (Deep Integration Mode)")
+    add_definitions(-DPECJ_MODE_INTEGRATED)
+    
+    add_library(sage_tsdb_compute
+        src/compute/pecj_compute_engine.cpp
+        src/compute/window_scheduler.cpp
+    )
+    
+    target_include_directories(sage_tsdb_compute
+        PUBLIC
+            $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
+            $<INSTALL_INTERFACE:include>
+        PRIVATE
+            ${PROJECT_SOURCE_DIR}/src
+    )
+    
+    target_link_libraries(sage_tsdb_compute
+        PUBLIC
+            sage_tsdb_core
+    )
+    
+    message(STATUS "Built library: sage_tsdb_compute (with WindowScheduler)")
+endif()
 
 target_include_directories(sage_tsdb_core
     PUBLIC

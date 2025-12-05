@@ -1,6 +1,8 @@
 # Build directories
 build/
 build_stub/
+build_integrated/
+build_window_scheduler/
 cmake-build-debug/
 cmake-build-release/
 

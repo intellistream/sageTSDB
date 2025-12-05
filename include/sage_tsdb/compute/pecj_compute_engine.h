@@ -25,6 +25,9 @@
 namespace sage_tsdb {
 namespace core {
 class TimeSeriesDB;
+}
+
+namespace plugins {
 class ResourceHandle;
 }
 }
@@ -154,6 +157,7 @@ struct ComputeMetrics {
 class PECJComputeEngine {
 public:
     PECJComputeEngine();
+    // Destructor declared here, implemented in .cpp to handle conditional compilation
     ~PECJComputeEngine();
     
     // Disable copy and move
@@ -171,7 +175,7 @@ public:
      */
     bool initialize(const ComputeConfig& config,
                    core::TimeSeriesDB* db,
-                   core::ResourceHandle* resource_handle);
+                   plugins::ResourceHandle* resource_handle);
     
     /**
      * @brief Execute window join computation (synchronous call)
@@ -217,12 +221,14 @@ public:
 private:
     // === Core Components ===
     core::TimeSeriesDB* db_;                    ///< Database reference (not owned)
-    core::ResourceHandle* resource_handle_;     ///< Resource handle (not owned)
+    plugins::ResourceHandle* resource_handle_;  ///< Resource handle (not owned)
     ComputeConfig config_;                      ///< Algorithm configuration
     std::atomic<bool> initialized_;             ///< Initialization flag
     
     // === PECJ Operator ===
+#ifdef PECJ_FULL_INTEGRATION
     std::unique_ptr<OoOJoin::AbstractOperator> pecj_operator_;
+#endif
     
     // === Metrics Tracking ===
     mutable std::shared_mutex metrics_mutex_;   ///< Protects metrics_
@@ -234,6 +240,7 @@ private:
     
     // === Private Methods ===
     
+#ifdef PECJ_FULL_INTEGRATION
     /**
      * @brief Convert sageTSDB data to PECJ TrackTuple format
      */
@@ -245,6 +252,7 @@ private:
      */
     std::vector<std::vector<uint8_t>> convertToTable(
         const std::vector<std::pair<OoOJoin::TrackTuple, OoOJoin::TrackTuple>>& pecj_result);
+#endif
     
     /**
      * @brief Update metrics after window completion
@@ -261,6 +269,7 @@ private:
      */
     bool createPECJOperator();
     
+#ifdef PECJ_FULL_INTEGRATION
     /**
      * @brief Execute join with timeout protection
      */
@@ -277,6 +286,7 @@ private:
         const std::vector<OoOJoin::TrackTuple>& s_data,
         const std::vector<OoOJoin::TrackTuple>& r_data,
         uint64_t window_id);
+#endif
     
     /**
      * @brief Write join results to database table

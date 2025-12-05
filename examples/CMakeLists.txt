@@ -12,6 +12,32 @@ target_link_libraries(persistence_example
         sage_tsdb_core
 )
 
+# Table design demo
+add_executable(table_design_demo
+    table_design_demo.cpp
+)
+
+target_link_libraries(table_design_demo
+    PRIVATE
+        sage_tsdb_core
+)
+
+# WindowScheduler demo (only if compute library is built)
+if(TARGET sage_tsdb_compute)
+    add_executable(window_scheduler_demo
+        window_scheduler_demo.cpp
+    )
+    
+    target_link_libraries(window_scheduler_demo
+        PRIVATE
+            sage_tsdb_core
+            sage_tsdb_compute
+            sage_tsdb_plugins
+    )
+    
+    message(STATUS "Building window_scheduler_demo")
+endif()
+
 # Plugin usage example (only if plugins are built)
 if(TARGET sage_tsdb_plugins)
     add_executable(plugin_usage_example

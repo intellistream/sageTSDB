@@ -269,9 +269,130 @@ public:
                (total_memory >= max_memory_bytes_ * 0.9);
     }
     
+    // ========== Compute Engine Resource Management Implementation ==========
+    
+    std::shared_ptr<ResourceHandle> allocateForCompute(
+        const std::string& compute_name,
+        const ResourceRequest& request) override {
+        
+        // Use the same allocation mechanism as plugins, but track separately
+        std::lock_guard<std::mutex> lock(mutex_);
+        
+        // Check if already allocated
+        if (compute_handles_.find(compute_name) != compute_handles_.end()) {
+            return compute_handles_[compute_name];
+        }
+        
+        // Calculate current usage (including both plugins and compute engines)
+        ResourceUsage current_total;
+        for (const auto& [name, handle] : handles_) {
+            auto usage = handle->getUsage();
+            current_total.threads_used += usage.threads_used;
+            current_total.memory_used_bytes += usage.memory_used_bytes;
+        }
+        for (const auto& [name, handle] : compute_handles_) {
+            auto usage = handle->getUsage();
+            current_total.threads_used += usage.threads_used;
+            current_total.memory_used_bytes += usage.memory_used_bytes;
+        }
+        
+        // Determine actual allocation with quota enforcement
+        ResourceRequest allocated = request;
+        if (allocated.requested_threads == 0) {
+            allocated.requested_threads = 4; // Default for compute engines
+        }
+        if (allocated.max_memory_bytes == 0) {
+            allocated.max_memory_bytes = 1ULL * 1024 * 1024 * 1024; // 1GB default
+        }
+        
+        // Check if we have enough resources
+        int total_threads_after = current_total.threads_used + allocated.requested_threads;
+        uint64_t total_memory_after = current_total.memory_used_bytes + allocated.max_memory_bytes;
+        
+        if (total_threads_after > max_threads_) {
+            int available_threads = max_threads_ - current_total.threads_used;
+            if (available_threads <= 0) {
+                return nullptr;
+            }
+            allocated.requested_threads = std::min(allocated.requested_threads, available_threads);
+        }
+        
+        if (total_memory_after > max_memory_bytes_) {
+            uint64_t available_memory = max_memory_bytes_ - current_total.memory_used_bytes;
+            if (available_memory < 256ULL * 1024 * 1024) { // Minimum 256MB for compute
+                return nullptr;
+            }
+            allocated.max_memory_bytes = std::min(allocated.max_memory_bytes, available_memory);
+        }
+        
+        // Create handle
+        auto handle = std::make_shared<ResourceHandleImpl>(compute_name, allocated);
+        compute_handles_[compute_name] = handle;
+        
+        // Spawn worker threads for this compute engine
+        for (int i = 0; i < allocated.requested_threads; ++i) {
+            worker_threads_.emplace_back([handle, this]() {
+                handle->processTasksUntil(should_stop_);
+            });
+        }
+        
+        return handle;
+    }
+    
+    void releaseCompute(const std::string& compute_name) override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        auto it = compute_handles_.find(compute_name);
+        if (it != compute_handles_.end()) {
+            it->second->invalidate();
+            compute_handles_.erase(it);
+        }
+    }
+    
+    ResourceUsage getComputeUsage(const std::string& compute_name) const override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        auto it = compute_handles_.find(compute_name);
+        if (it != compute_handles_.end()) {
+            return it->second->getUsage();
+        }
+        return ResourceUsage{};
+    }
+    
+    void throttleCompute(const std::string& compute_name, double factor) override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        auto it = compute_handles_.find(compute_name);
+        if (it != compute_handles_.end()) {
+            // Store throttle factor for future use
+            compute_throttle_[compute_name] = factor;
+            
+            // In a real implementation, this would:
+            // 1. Adjust task execution rate
+            // 2. Insert delays between tasks
+            // 3. Reduce thread priority
+            // For now, we just track the factor
+        }
+    }
+    
+    std::vector<std::string> listComputeEngines() const override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        std::vector<std::string> names;
+        names.reserve(compute_handles_.size());
+        for (const auto& [name, _] : compute_handles_) {
+            names.push_back(name);
+        }
+        return names;
+    }
+    
 private:
     mutable std::mutex mutex_;
+    
+    // Plugin handles (original functionality)
     std::unordered_map<std::string, std::shared_ptr<ResourceHandleImpl>> handles_;
+    
+    // Compute engine handles (separate pool for isolation)
+    std::unordered_map<std::string, std::shared_ptr<ResourceHandleImpl>> compute_handles_;
+    
+    // Compute throttle factors
+    std::unordered_map<std::string, double> compute_throttle_;
     
     int max_threads_;
     uint64_t max_memory_bytes_;
