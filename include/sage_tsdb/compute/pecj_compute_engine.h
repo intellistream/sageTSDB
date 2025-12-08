@@ -23,9 +23,7 @@
 
 // Forward declarations
 namespace sage_tsdb {
-namespace core {
-class TimeSeriesDB;
-}
+class TimeSeriesDB;  // TimeSeriesDB is in sage_tsdb namespace, not sage_tsdb::core
 
 namespace plugins {
 class ResourceHandle;
@@ -174,7 +172,7 @@ public:
      * @return true if initialization succeeded
      */
     bool initialize(const ComputeConfig& config,
-                   core::TimeSeriesDB* db,
+                   TimeSeriesDB* db,
                    plugins::ResourceHandle* resource_handle);
     
     /**
@@ -220,14 +218,14 @@ public:
 
 private:
     // === Core Components ===
-    core::TimeSeriesDB* db_;                    ///< Database reference (not owned)
+    TimeSeriesDB* db_;                          ///< Database reference (not owned)
     plugins::ResourceHandle* resource_handle_;  ///< Resource handle (not owned)
     ComputeConfig config_;                      ///< Algorithm configuration
     std::atomic<bool> initialized_;             ///< Initialization flag
     
     // === PECJ Operator ===
 #ifdef PECJ_FULL_INTEGRATION
-    std::unique_ptr<OoOJoin::AbstractOperator> pecj_operator_;
+    std::shared_ptr<OoOJoin::AbstractOperator> pecj_operator_;  // PECJ uses shared_ptr
 #endif
     
     // === Metrics Tracking ===

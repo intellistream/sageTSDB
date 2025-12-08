@@ -6,8 +6,6 @@
  * @date 2024-12-04
  */
 
-#include "sage_tsdb/compute/pecj_compute_engine.h"
-
 #ifdef PECJ_MODE_INTEGRATED
 
 #include <algorithm>
@@ -17,18 +15,27 @@
 #include <sstream>
 #include <mutex>
 #include <numeric>
-#include <numeric>
-#include <mutex>
+#include <memory>
 
-// sageTSDB core headers (to be implemented)
+// sageTSDB core headers - include BEFORE everything else
 #include "sage_tsdb/core/time_series_db.h"
+#include "sage_tsdb/core/time_series_data.h"
 #include "sage_tsdb/plugins/resource_manager.h"
+
+// Now include the header - after core dependencies are resolved
+#include "sage_tsdb/compute/pecj_compute_engine.h"
+
+// PECJ needs std namespace visible for its macros
+using namespace std;
 
 // PECJ headers
 #ifdef PECJ_FULL_INTEGRATION
 #include "OoOJoin.h"
-#include "Operator/AbstractOperator.h"
-#include "Common/TrackTuple.h"
+#include "Operator/IAWJOperator.h"
+#include "Operator/MSWJOperator.h"
+#include "Operator/RawSHJOperator.h"
+#include "Common/Tuples.h"
+#include <sys/time.h>
 #endif
 
 namespace sage_tsdb {
@@ -82,15 +89,17 @@ PECJComputeEngine::~PECJComputeEngine() {
 #endif
 
 bool PECJComputeEngine::initialize(const ComputeConfig& config,
-                                   core::TimeSeriesDB* db,
+                                   TimeSeriesDB* db,
                                    plugins::ResourceHandle* resource_handle) {
     if (initialized_.load()) {
         return false; // Already initialized
     }
     
-    if (!db || !resource_handle) {
-        return false; // Invalid arguments
+    if (!db) {
+        return false; // Invalid arguments (db is required)
     }
+    
+    // resource_handle can be nullptr in stub mode
     
     // Store configuration and references
     config_ = config;
@@ -118,26 +127,56 @@ bool PECJComputeEngine::initialize(const ComputeConfig& config,
 bool PECJComputeEngine::createPECJOperator() {
 #ifdef PECJ_FULL_INTEGRATION
     try {
-        // Configure PECJ operator based on config_
-        OoOJoin::OperatorConfig pecj_config;
-        pecj_config.window_len = config_.window_len_us;
-        pecj_config.slide_len = config_.slide_len_us;
-        pecj_config.max_delay = config_.max_delay_us;
+        // Create PECJ config map - use direct make_shared to avoid macro issues
+        auto pecj_config = std::make_shared<INTELLI::ConfigMap>();
+        
+        // Set window parameters (in microseconds)
+        pecj_config->edit("windowLen", config_.window_len_us);
+        pecj_config->edit("slideLen", config_.slide_len_us);
+        pecj_config->edit("sLen", static_cast<uint64_t>(100000)); // S buffer size
+        pecj_config->edit("rLen", static_cast<uint64_t>(100000)); // R buffer size
+        pecj_config->edit("timeStep", static_cast<uint64_t>(1000)); // Time step in us
+        pecj_config->edit("joinSum", static_cast<uint64_t>(1)); // Enable join result counting
         
         // Create operator based on type
-        if (config_.operator_type == "IAWJ") {
-            pecj_operator_ = std::make_unique<OoOJoin::IAWJOperator>(pecj_config);
+        if (config_.operator_type == "IAWJ" || config_.operator_type == "IMA") {
+            pecj_operator_ = std::make_shared<OoOJoin::IAWJOperator>();
         } else if (config_.operator_type == "MWAY") {
-            pecj_operator_ = std::make_unique<OoOJoin::MWAYOperator>(pecj_config);
+            pecj_operator_ = std::make_shared<OoOJoin::MSWJOperator>();
+        } else if (config_.operator_type == "SHJ") {
+            pecj_operator_ = std::make_shared<OoOJoin::RawSHJOperator>();
         } else {
             // Default to IAWJ
-            pecj_operator_ = std::make_unique<OoOJoin::IAWJOperator>(pecj_config);
+            pecj_operator_ = std::make_shared<OoOJoin::IAWJOperator>();
         }
         
-        return pecj_operator_ != nullptr;
+        if (!pecj_operator_) {
+            return false;
+        }
+        
+        // Set configuration
+        if (!pecj_operator_->setConfig(pecj_config)) {
+            return false;
+        }
+        
+        // Set window parameters
+        pecj_operator_->setWindow(config_.window_len_us, config_.slide_len_us);
+        
+        // Synchronize time structure
+        struct timeval tv;
+        gettimeofday(&tv, nullptr);
+        pecj_operator_->syncTimeStruct(tv);
+        
+        // Start the operator
+        if (!pecj_operator_->start()) {
+            return false;
+        }
+        
+        return true;
         
     } catch (const std::exception& e) {
         // Log error
+        std::cerr << "Failed to create PECJ operator: " << e.what() << std::endl;
         return false;
     }
 #else
@@ -164,48 +203,100 @@ ComputeStatus PECJComputeEngine::executeWindowJoin(uint64_t window_id,
         };
     }
     
+    auto start_time = std::chrono::steady_clock::now();
+    
     ComputeStatus status;
     status.window_id = window_id;
     
 #ifdef PECJ_FULL_INTEGRATION
     try {
-        // Step 1: Query data from sageTSDB tables
-        std::vector<std::vector<uint8_t>> s_data_raw;
-        std::vector<std::vector<uint8_t>> r_data_raw;
-        
-        // TODO: Implement query using TableManager
-        // Query Stream S
-        // if (!db_->query(config_.stream_s_table, time_range, s_data_raw)) {
-        //     status.success = false;
-        //     status.error = "Failed to query stream_s table";
-        //     return status;
-        // }
-        
-        // Query Stream R
-        // if (!db_->query(config_.stream_r_table, time_range, r_data_raw)) {
-        //     status.success = false;
-        //     status.error = "Failed to query stream_r table";
-        //     return status;
-        // }
-        
-        status.input_s_count = s_data_raw.size();
-        status.input_r_count = r_data_raw.size();
-        
-        // Step 2: Convert to PECJ format
-        auto s_data = convertFromTable(s_data_raw);
-        auto r_data = convertFromTable(r_data_raw);
-        
-        // Step 3: Check memory before computation
-        if (!checkMemoryLimit()) {
+        if (!pecj_operator_) {
             status.success = false;
-            status.error = "Memory limit exceeded";
+            status.error = "PECJ operator not initialized";
             return status;
         }
         
-        // Step 4: Execute PECJ join with timeout protection
-        status = executeWithTimeout(s_data, r_data, window_id, time_range);
+        // Step 1: Query data from sageTSDB tables
+        // Create TimeRange for query
+        sage_tsdb::TimeRange query_range;
+        query_range.start_time = time_range.start_us;
+        query_range.end_time = time_range.end_us;
         
-        // Step 5: Calculate metrics
+        auto s_data_tsdb = db_->query(config_.stream_s_table, query_range);
+        auto r_data_tsdb = db_->query(config_.stream_r_table, query_range);
+        
+        status.input_s_count = s_data_tsdb.size();
+        status.input_r_count = r_data_tsdb.size();
+        
+        // Debug: Print query results
+        std::cout << "    [DEBUG] Queried S: " << s_data_tsdb.size() 
+                  << " tuples, R: " << r_data_tsdb.size() << " tuples\n";
+        
+        // Step 2: Feed data to PECJ operator
+        size_t join_count_before = pecj_operator_->getResult();
+        
+        size_t s_fed = 0;
+        for (const auto& data : s_data_tsdb) {
+            // Convert TimeSeriesData to PECJ tuple
+            OoOJoin::keyType key = 0;
+            if (data.tags.count("key")) {
+                key = std::stoull(data.tags.at("key"));
+            }
+            
+            OoOJoin::valueType value = 0;
+            if (data.fields.count("value")) {
+                value = static_cast<OoOJoin::valueType>(std::stod(data.fields.at("value")));
+            }
+            
+            auto tuple = std::make_shared<OoOJoin::TrackTuple>(key, value, data.timestamp, data.timestamp);
+            pecj_operator_->feedTupleS(tuple);
+            s_fed++;
+            
+            // Debug: Print first few tuples
+            if (s_fed <= 3) {
+                std::cout << "    [DEBUG] Fed S tuple: key=" << key 
+                          << ", value=" << value 
+                          << ", timestamp=" << data.timestamp << "\n";
+            }
+        }
+        std::cout << "    [DEBUG] Fed " << s_fed << " S tuples\n";
+        
+        size_t r_fed = 0;
+        for (const auto& data : r_data_tsdb) {
+            // Convert TimeSeriesData to PECJ tuple
+            OoOJoin::keyType key = 0;
+            if (data.tags.count("key")) {
+                key = std::stoull(data.tags.at("key"));
+            }
+            
+            OoOJoin::valueType value = 0;
+            if (data.fields.count("value")) {
+                value = static_cast<OoOJoin::valueType>(std::stod(data.fields.at("value")));
+            }
+            
+            auto tuple = std::make_shared<OoOJoin::TrackTuple>(key, value, data.timestamp, data.timestamp);
+            pecj_operator_->feedTupleR(tuple);
+            r_fed++;
+            
+            // Debug: Print first few tuples
+            if (r_fed <= 3) {
+                std::cout << "    [DEBUG] Fed R tuple: key=" << key 
+                          << ", value=" << value 
+                          << ", timestamp=" << data.timestamp << "\n";
+            }
+        }
+        std::cout << "    [DEBUG] Fed " << r_fed << " R tuples\n";
+        
+        // Step 3: Get join results
+        size_t join_count_after = pecj_operator_->getResult();
+        status.join_count = join_count_after - join_count_before;
+        
+        // Debug: Print join results
+        std::cout << "    [DEBUG] Join results: before=" << join_count_before 
+                  << ", after=" << join_count_after 
+                  << ", delta=" << status.join_count << "\n";
+        
+        // Step 4: Calculate metrics
         auto end_time = std::chrono::steady_clock::now();
         status.computation_time_ms = std::chrono::duration<double, std::milli>(
             end_time - start_time).count();
@@ -215,7 +306,9 @@ ComputeStatus PECJComputeEngine::executeWindowJoin(uint64_t window_id,
                                (status.input_s_count * status.input_r_count);
         }
         
-        // Step 6: Update global metrics
+        status.success = true;
+        
+        // Step 5: Update global metrics
         updateMetrics(status);
         
     } catch (const std::exception& e) {
@@ -234,18 +327,22 @@ ComputeStatus PECJComputeEngine::executeWindowJoin(uint64_t window_id,
 }
 
 #ifdef PECJ_FULL_INTEGRATION
+// Note: This function is not currently used - PECJ join is triggered via feedTuple* methods
 ComputeStatus PECJComputeEngine::executeWithTimeout(
     const std::vector<OoOJoin::TrackTuple>& s_data,
     const std::vector<OoOJoin::TrackTuple>& r_data,
     uint64_t window_id,
     const TimeRange& time_range) {
     (void)time_range;  // Unused parameter
+    (void)s_data;
+    (void)r_data;
     
     ComputeStatus status;
     status.window_id = window_id;
-    status.input_s_count = s_data.size();
-    status.input_r_count = r_data.size();
+    status.success = false;
+    status.error = "executeWithTimeout not implemented - use feedTuple* methods instead";
     
+    /* Legacy code - PECJ doesn't have a join() method
     try {
         auto start = std::chrono::steady_clock::now();
         
@@ -255,40 +352,10 @@ ComputeStatus PECJComputeEngine::executeWithTimeout(
         // TODO: Implement timeout mechanism using resource_handle_->submitTask()
         // For now, execute directly
         if (pecj_operator_) {
-            join_results = pecj_operator_->join(s_data, r_data);
+            // PECJ processes tuples via feedTupleS/R, not a join() method
         }
         
-        auto end = std::chrono::steady_clock::now();
-        auto duration_ms = std::chrono::duration<double, std::milli>(end - start).count();
-        
-        // Check timeout
-        if (duration_ms > config_.timeout_ms) {
-            status.timeout_occurred = true;
-            
-            // Fallback to AQP if enabled
-            if (config_.enable_aqp) {
-                return fallbackToAQP(s_data, r_data, window_id);
-            }
-        }
-        
-        // Convert results to sageTSDB format
-        auto result_data = convertToTable(join_results);
-        
-        // Write to result table
-        if (!writeResults(window_id, result_data, status)) {
-            status.success = false;
-            status.error = "Failed to write results to table";
-            return status;
-        }
-        
-        status.success = true;
-        status.join_count = join_results.size();
-        status.used_aqp = false;
-        
-    } catch (const std::exception& e) {
-        status.success = false;
-        status.error = std::string("PECJ execution failed: ") + e.what();
-    }
+    */ // End of legacy code
     
     return status;
 }
@@ -296,13 +363,19 @@ ComputeStatus PECJComputeEngine::executeWithTimeout(
 #endif // PECJ_FULL_INTEGRATION (end of executeWithTimeout)
 
 #ifdef PECJ_FULL_INTEGRATION
+// Note: This function is not currently used
 ComputeStatus PECJComputeEngine::fallbackToAQP(
     const std::vector<OoOJoin::TrackTuple>& s_data,
     const std::vector<OoOJoin::TrackTuple>& r_data,
     uint64_t window_id) {
+    (void)s_data;
+    (void)r_data;
     
     ComputeStatus status;
     status.window_id = window_id;
+    status.success = false;
+    status.error = "AQP fallback not implemented";
+    /* Legacy code
     status.input_s_count = s_data.size();
     status.input_r_count = r_data.size();
     status.used_aqp = true;
@@ -318,29 +391,10 @@ ComputeStatus PECJComputeEngine::fallbackToAQP(
         std::vector<OoOJoin::TrackTuple> r_sample(r_data.begin(),
                                                    r_data.begin() + r_sample_size);
         
-        auto sample_results = pecj_operator_->join(s_sample, r_sample);
+        // PECJ doesn't have join() method
+        //auto sample_results = pecj_operator_->join(s_sample, r_sample);
         
-        // Estimate full result count
-        double scaling_factor = 1.0 / (sample_ratio * sample_ratio);
-        status.aqp_estimate = sample_results.size() * scaling_factor;
-        status.join_count = static_cast<size_t>(status.aqp_estimate);
-        
-        // Convert and write results
-        auto result_data = convertToTable(sample_results);
-        writeResults(window_id, result_data, status);
-        
-        status.success = true;
-        
-        // Update AQP metrics
-        {
-            std::unique_lock<std::shared_mutex> lock(metrics_mutex_);
-            metrics_.aqp_invocations++;
-        }
-        
-    } catch (const std::exception& e) {
-        status.success = false;
-        status.error = std::string("AQP fallback failed: ") + e.what();
-    }
+    */ // End of legacy code
     
     return status;
 }
@@ -359,7 +413,7 @@ std::vector<OoOJoin::TrackTuple> PECJComputeEngine::convertFromTable(
         }
         
         // Deserialize from bytes
-        OoOJoin::TrackTuple tuple;
+        OoOJoin::TrackTuple tuple(0); // Provide default key value
         std::memcpy(&tuple, raw_data.data(), sizeof(OoOJoin::TrackTuple));
         result.push_back(tuple);
     }

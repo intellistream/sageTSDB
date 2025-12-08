@@ -1,5 +1,30 @@
 {
     "demo_configurations": {
+        "deep_integration": {
+            "description": "sageTSDB + PECJ 深度集成演示（真实数据集）",
+            "program": "deep_integration_demo",
+            "data": {
+                "s_file": "../../../PECJ/benchmark/datasets/sTuple.csv",
+                "r_file": "../../../PECJ/benchmark/datasets/rTuple.csv",
+                "max_events_s": 60000,
+                "max_events_r": 60000
+            },
+            "window": {
+                "window_len_us": 10000,
+                "slide_len_us": 5000,
+                "watermark_us": 2000
+            },
+            "pecj": {
+                "operator": "SHJ",
+                "threads": 4,
+                "max_memory_mb": 512
+            },
+            "display": {
+                "verbose": true,
+                "progress_interval": 5000,
+                "show_samples": 10
+            }
+        },
         "basic_replay": {
             "description": "基础 PECJ 重放演示",
             "program": "pecj_replay_demo",
