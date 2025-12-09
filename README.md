@@ -13,33 +13,60 @@ sageTSDB is a high-performance time series database designed for streaming data 
 - **Stream Join**: Window-based join for multiple time series streams
 - **Python Bindings**: Easy-to-use Python API via pybind11
 
-## 🏗️ Architecture
+## 🏗️ Project Structure
 
 ```
 sageTSDB/
-├── include/
-│   └── sage_tsdb/
-│       ├── core/
-│       │   ├── time_series_data.h      # Data structures
-│       │   ├── time_series_index.h     # Indexing
-│       │   └── time_series_db.h        # Core database
-│       ├── algorithms/
-│       │   ├── algorithm_base.h        # Algorithm interface
-│       │   ├── stream_join.h           # Stream join algorithm
-│       │   └── window_aggregator.h     # Window aggregation
-│       └── utils/
-│           ├── config.h                # Configuration
-│           └── common.h                # Common utilities
-├── src/
-│   ├── core/
-│   ├── algorithms/
-│   └── utils/
-├── python/
-│   └── bindings.cpp                    # pybind11 bindings
-├── tests/
-│   └── cpp/
-└── CMakeLists.txt
+├── include/sage_tsdb/          # Public header files
+│   ├── core/                   # Core time series database
+│   ├── algorithms/             # Stream processing algorithms
+│   ├── plugins/                # Plugin system (PECJ, fault detection)
+│   └── utils/                  # Utilities and helpers
+│
+├── src/                        # Implementation files
+│   ├── core/                   # Core implementation
+│   ├── algorithms/             # Algorithm implementations
+│   ├── plugins/                # Plugin implementations
+│   └── utils/                  # Utility implementations
+│
+├── tests/                      # 🔬 Unit tests (GoogleTest)
+│   ├── test_*.cpp              # All test files with detailed comments
+│   └── CMakeLists.txt          # Test build configuration
+│
+├── examples/                   # 📚 Demo programs
+│   ├── persistence_example.cpp # Data persistence demo
+│   ├── plugin_usage_example.cpp# Plugin system demo
+│   ├── integrated_demo.cpp     # PECJ integration demo
+│   ├── pecj_replay_demo.cpp    # PECJ replay demo
+│   ├── performance_benchmark.cpp # Performance testing
+│   └── README.md               # Examples documentation
+│
+├── docs/                       # 📖 Documentation
+│   ├── DESIGN_DOC_SAGETSDB_PECJ.md  # Architecture design
+│   ├── PERSISTENCE.md               # Persistence guide
+│   ├── LSM_TREE_IMPLEMENTATION.md   # LSM Tree details
+│   ├── RESOURCE_MANAGER_GUIDE.md    # Resource management
+│   └── README.md                     # Documentation index
+│
+├── scripts/                    # 🛠️ Build and utility scripts
+│   ├── build.sh                # Main build script
+│   ├── build_plugins.sh        # Plugin build script
+│   ├── build_and_test.sh       # Build and test examples
+│   ├── run_demo.sh             # Demo launcher
+│   ├── test_lsm_tree.sh        # LSM Tree testing
+│   └── README.md               # Scripts documentation
+│
+├── python/                     # Python bindings (pybind11)
+├── cmake/                      # CMake modules
+└── CMakeLists.txt              # Root build configuration
 ```
+
+### Directory Organization
+
+- **tests/**: All test files consolidated here (removed old `test/` folder)
+- **examples/**: Demo programs only (moved test programs to `tests/`)
+- **docs/**: All documentation (removed duplicate/outdated docs)
+- **scripts/**: All build scripts in one place (removed outdated scripts)
 
 ## 📦 Building
 

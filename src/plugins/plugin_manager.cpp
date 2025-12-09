@@ -1,8 +1,27 @@
 #include "sage_tsdb/plugins/plugin_manager.h"
 #include <iostream>
+#include <sstream>
 
 namespace sage_tsdb {
 namespace plugins {
+
+namespace {
+// Helper to get config value with default
+template<typename T>
+T getConfigValue(const PluginConfig& config, const std::string& key, T default_value) {
+    auto it = config.find(key);
+    if (it == config.end()) {
+        return default_value;
+    }
+    
+    std::istringstream iss(it->second);
+    T value;
+    if (iss >> value) {
+        return value;
+    }
+    return default_value;
+}
+} // anonymous namespace
 
 PluginManager::PluginManager()
     : initialized_(false), running_(false) {
@@ -16,6 +35,22 @@ bool PluginManager::initialize() {
     if (initialized_) {
         return true;
     }
+    
+    // Create ResourceManager
+    resource_manager_ = createResourceManager();
+    if (!resource_manager_) {
+        std::cerr << "Failed to create ResourceManager" << std::endl;
+        return false;
+    }
+    
+    // Set global limits from config
+    resource_manager_->setGlobalLimits(
+        resource_config_.thread_pool_size,
+        resource_config_.max_memory_mb * 1024ULL * 1024ULL
+    );
+    
+    std::cout << "✓ ResourceManager created (threads=" << resource_config_.thread_pool_size 
+              << ", memory=" << resource_config_.max_memory_mb << "MB)" << std::endl;
     
     // Start event bus
     event_bus_.start();
@@ -43,10 +78,56 @@ bool PluginManager::loadPlugin(const std::string& name, const PluginConfig& conf
         return false;
     }
     
-    // Initialize plugin
-    if (!plugin->initialize(config)) {
-        std::cerr << "Failed to initialize plugin '" << name << "'" << std::endl;
-        return false;
+    // Attempt resource allocation if ResourceManager is available
+    std::shared_ptr<ResourceHandle> resource_handle;
+    ResourceRequest request;  // Reuse for both allocation and initialization
+    
+    if (resource_manager_) {
+        // Extract resource request from plugin config (with defaults)
+        request.requested_threads = getConfigValue<int>(config, "threads", 2);
+        request.max_memory_bytes = getConfigValue<size_t>(config, "memory_mb", 256) * 1024ULL * 1024ULL;
+        request.priority = getConfigValue<int>(config, "priority", 1);
+        
+        // GPU support (optional)
+        auto gpu_id = getConfigValue<int>(config, "gpu_id", -1);
+        if (gpu_id >= 0) {
+            request.gpu_ids.push_back(gpu_id);
+        }
+        
+        resource_handle = resource_manager_->allocate(name, request);
+        if (!resource_handle) {
+            std::cerr << "Failed to allocate resources for plugin '" << name << "'" << std::endl;
+            // Continue with legacy initialization
+        } else {
+            std::cout << "✓ Resources allocated for '" << name << "' (threads=" 
+                      << request.requested_threads << ", memory=" 
+                      << (request.max_memory_bytes / 1024 / 1024) << "MB)" << std::endl;
+        }
+    }
+    
+    // Try new initialize method with ResourceManager first
+    bool init_success = false;
+    if (resource_handle) {
+        init_success = plugin->initialize(config, request, resource_handle.get());
+        
+        if (init_success) {
+            std::cout << "✓ Plugin '" << name << "' initialized in Integrated mode" << std::endl;
+            // Store the resource handle for later cleanup
+            plugin_resources_[name] = std::move(resource_handle);
+        } else {
+            std::cerr << "Plugin '" << name << "' rejected ResourceManager initialization" << std::endl;
+            // Release the resource handle and fall back
+            resource_handle.reset();
+        }
+    }
+    
+    // Fallback to legacy initialization
+    if (!init_success) {
+        if (!plugin->initialize(config)) {
+            std::cerr << "Failed to initialize plugin '" << name << "'" << std::endl;
+            return false;
+        }
+        std::cout << "✓ Plugin '" << name << "' initialized in Baseline/Stub mode" << std::endl;
     }
     
     // Store plugin
@@ -67,6 +148,16 @@ bool PluginManager::unloadPlugin(const std::string& name) {
     
     // Stop plugin if running
     it->second->stop();
+    
+    // Release resources if allocated
+    auto res_it = plugin_resources_.find(name);
+    if (res_it != plugin_resources_.end()) {
+        if (resource_manager_) {
+            resource_manager_->release(name);
+            std::cout << "✓ Resources released for plugin '" << name << "'" << std::endl;
+        }
+        plugin_resources_.erase(res_it);
+    }
     
     // Remove plugin
     plugins_.erase(it);
@@ -168,10 +259,29 @@ PluginManager::getAllStats() const {
     for (const auto& pair : plugins_) {
         try {
             all_stats[pair.first] = pair.second->getStats();
+            
+            // Add resource usage if ResourceManager is active
+            auto res_it = plugin_resources_.find(pair.first);
+            if (res_it != plugin_resources_.end() && resource_manager_) {
+                auto usage = resource_manager_->queryUsage(pair.first);
+                all_stats[pair.first]["resource_threads"] = usage.threads_used;
+                all_stats[pair.first]["resource_memory_mb"] = usage.memory_used_bytes / 1024 / 1024;
+                all_stats[pair.first]["resource_queue_length"] = usage.queue_length;
+            }
         } catch (const std::exception& e) {
             std::cerr << "Error getting stats from plugin '" << pair.first 
                      << "': " << e.what() << std::endl;
         }
+    }
+    
+    // Add global ResourceManager stats
+    if (resource_manager_) {
+        auto total_usage = resource_manager_->getTotalUsage();
+        all_stats["_resource_manager"]["total_threads"] = total_usage.threads_used;
+        all_stats["_resource_manager"]["total_memory_mb"] = total_usage.memory_used_bytes / 1024 / 1024;
+        all_stats["_resource_manager"]["total_queue_length"] = total_usage.queue_length;
+        all_stats["_resource_manager"]["high_pressure"] = 
+            resource_manager_->isUnderPressure() ? 1 : 0;
     }
     
     return all_stats;

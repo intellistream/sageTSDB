@@ -3,6 +3,7 @@
 #include "plugin_interface.h"
 #include "plugin_registry.h"
 #include "event_bus.h"
+#include "resource_manager.h"
 #include <memory>
 #include <mutex>
 #include <unordered_map>
@@ -109,6 +110,11 @@ public:
     
     void setResourceConfig(const ResourceConfig& config);
     ResourceConfig getResourceConfig() const;
+    
+    /**
+     * @brief Get ResourceManager instance (for testing/monitoring)
+     */
+    ResourceManager* getResourceManager() { return resource_manager_.get(); }
 
 private:
     /**
@@ -125,6 +131,10 @@ private:
     std::unordered_map<std::string, PluginPtr> plugins_;
     std::unordered_map<std::string, bool> plugin_enabled_;
     mutable std::mutex plugins_mutex_;
+    
+    // Resource management per plugin
+    std::unordered_map<std::string, std::shared_ptr<ResourceHandle>> plugin_resources_;
+    std::shared_ptr<ResourceManager> resource_manager_;
     
     // Event bus for communication
     EventBus event_bus_;

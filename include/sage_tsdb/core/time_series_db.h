@@ -8,8 +8,21 @@
 
 namespace sage_tsdb {
 
-// Forward declaration
+// Forward declarations
 class TimeSeriesAlgorithm;
+class ResourceManager;
+
+/**
+ * @brief Table type enumeration
+ * 
+ * Defines different table types for specialized storage and query patterns
+ */
+enum class TableType {
+    TimeSeries,      ///< General time series data (default)
+    Stream,          ///< Stream input data (optimized for append)
+    JoinResult,      ///< Join computation results
+    ComputeState     ///< Compute engine internal state
+};
 
 /**
  * @brief Main time series database class
@@ -25,8 +38,90 @@ public:
     TimeSeriesDB();
     ~TimeSeriesDB();
     
+    // ========== Multi-Table Management API ==========
+    
     /**
-     * @brief Add a single data point
+     * @brief Create a named table with specified type
+     * @param name Table name (e.g., "stream_s", "join_results")
+     * @param type Table type (default: TimeSeries)
+     * @return true if created successfully, false if already exists
+     * 
+     * Example:
+     *   db.createTable("stream_s", TableType::Stream);
+     *   db.createTable("join_results", TableType::JoinResult);
+     */
+    bool createTable(const std::string& name, TableType type = TableType::TimeSeries);
+    
+    /**
+     * @brief Drop a table
+     * @param name Table name
+     * @return true if dropped successfully
+     */
+    bool dropTable(const std::string& name);
+    
+    /**
+     * @brief Check if table exists
+     * @param name Table name
+     * @return true if exists
+     */
+    bool hasTable(const std::string& name) const;
+    
+    /**
+     * @brief List all table names
+     * @return Vector of table names
+     */
+    std::vector<std::string> listTables() const;
+    
+    /**
+     * @brief Insert data into a specific table
+     * @param table_name Target table name
+     * @param data Time series data
+     * @return Index of added data
+     * 
+     * Example:
+     *   db.insert("stream_s", data);
+     */
+    size_t insert(const std::string& table_name, const TimeSeriesData& data);
+    
+    /**
+     * @brief Insert batch data into a specific table
+     * @param table_name Target table name
+     * @param data_list Vector of time series data
+     * @return Vector of indices
+     */
+    std::vector<size_t> insertBatch(const std::string& table_name, 
+                                     const std::vector<TimeSeriesData>& data_list);
+    
+    /**
+     * @brief Query data from a specific table
+     * @param table_name Source table name
+     * @param config Query configuration
+     * @return Vector of matching data points
+     * 
+     * Example:
+     *   auto results = db.query("stream_s", QueryConfig{
+     *       .time_range = {start, end},
+     *       .filter_tags = {{"symbol", "AAPL"}}
+     *   });
+     */
+    std::vector<TimeSeriesData> query(const std::string& table_name, 
+                                       const QueryConfig& config) const;
+    
+    /**
+     * @brief Query data from a specific table with time range
+     * @param table_name Source table name
+     * @param time_range Time range for query
+     * @param filter_tags Optional tags to filter by
+     * @return Vector of matching data points
+     */
+    std::vector<TimeSeriesData> query(const std::string& table_name,
+                                       const TimeRange& time_range,
+                                       const Tags& filter_tags = {}) const;
+    
+    // ========== Default Table API (backward compatible) ==========
+    
+    /**
+     * @brief Add a single data point to default table
      * @param data Time series data
      * @return Index of added data
      */
@@ -199,10 +294,32 @@ public:
      * @return Storage statistics map
      */
     std::map<std::string, uint64_t> get_storage_stats() const;
+    
+    // ========== Resource Management API ==========
+    
+    /**
+     * @brief Get ResourceManager instance
+     * @return Pointer to ResourceManager (shared across all components)
+     */
+    std::shared_ptr<ResourceManager> getResourceManager() const;
+    
+    /**
+     * @brief Set ResourceManager instance
+     * @param resource_manager ResourceManager to use
+     * 
+     * Note: Must be called before any compute engine initialization
+     */
+    void setResourceManager(std::shared_ptr<ResourceManager> resource_manager);
 
 private:
-    // Core index
+    // Core index (default table)
     std::unique_ptr<TimeSeriesIndex> index_;
+    
+    // Multi-table storage: table_name -> index
+    std::unordered_map<std::string, std::unique_ptr<TimeSeriesIndex>> tables_;
+    
+    // Table type metadata: table_name -> type
+    std::unordered_map<std::string, TableType> table_types_;
     
     // Registered algorithms
     std::unordered_map<std::string, std::shared_ptr<TimeSeriesAlgorithm>> algorithms_;
@@ -213,6 +330,13 @@ private:
     
     // Storage engine (forward declared, initialized in constructor)
     std::unique_ptr<class StorageEngine> storage_engine_;
+    
+    // Resource manager (shared)
+    std::shared_ptr<ResourceManager> resource_manager_;
+    
+    // Helper: Get or create table index
+    TimeSeriesIndex* getTableIndex(const std::string& table_name);
+    const TimeSeriesIndex* getTableIndex(const std::string& table_name) const;
 };
 
 } // namespace sage_tsdb

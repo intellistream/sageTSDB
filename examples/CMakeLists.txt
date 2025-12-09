@@ -12,6 +12,52 @@ target_link_libraries(persistence_example
         sage_tsdb_core
 )
 
+# Table design demo
+add_executable(table_design_demo
+    table_design_demo.cpp
+)
+
+target_link_libraries(table_design_demo
+    PRIVATE
+        sage_tsdb_core
+)
+
+# WindowScheduler demo (only if compute library is built)
+if(TARGET sage_tsdb_compute)
+    add_executable(window_scheduler_demo
+        window_scheduler_demo.cpp
+    )
+    
+    target_link_libraries(window_scheduler_demo
+        PRIVATE
+            sage_tsdb_core
+            sage_tsdb_compute
+            sage_tsdb_plugins
+    )
+    
+    message(STATUS "Building window_scheduler_demo")
+endif()
+
+# Deep Integration Demo (only if compute library is built in INTEGRATED mode)
+if(TARGET sage_tsdb_compute AND PECJ_MODE STREQUAL "INTEGRATED")
+    add_executable(deep_integration_demo
+        deep_integration_demo.cpp
+    )
+    
+    target_link_libraries(deep_integration_demo
+        PRIVATE
+            sage_tsdb_core
+            sage_tsdb_compute
+    )
+    
+    target_compile_definitions(deep_integration_demo
+        PRIVATE
+            PECJ_MODE_INTEGRATED
+    )
+    
+    message(STATUS "Building deep_integration_demo (PECJ Integrated Mode)")
+endif()
+
 # Plugin usage example (only if plugins are built)
 if(TARGET sage_tsdb_plugins)
     add_executable(plugin_usage_example
@@ -99,18 +145,15 @@ if(TARGET sage_tsdb_plugins)
         COPYONLY
     )
     
-    configure_file(
-        ${CMAKE_CURRENT_SOURCE_DIR}/README_PECJ_DEMO.md
-        ${CMAKE_CURRENT_BINARY_DIR}/README_PECJ_DEMO.md
-        COPYONLY
-    )
-    
 endif()
 
 # Install examples (optional)
-set(EXAMPLE_TARGETS persistence_example)
+set(EXAMPLE_TARGETS persistence_example table_design_demo)
 if(TARGET plugin_usage_example)
     list(APPEND EXAMPLE_TARGETS plugin_usage_example)
+endif()
+if(TARGET window_scheduler_demo)
+    list(APPEND EXAMPLE_TARGETS window_scheduler_demo)
 endif()
 
 install(TARGETS ${EXAMPLE_TARGETS}
@@ -118,10 +161,8 @@ install(TARGETS ${EXAMPLE_TARGETS}
 )
 
 # Install demo documentation and configs
-if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/README_PECJ_DEMO.md)
-    install(FILES 
-        README_PECJ_DEMO.md
-        demo_configs.json
-        DESTINATION share/doc/sageTSDB/examples
-    )
-endif()
+install(FILES 
+    README.md
+    demo_configs.json
+    DESTINATION share/doc/sageTSDB/examples
+)

@@ -4,14 +4,21 @@
 # Plugin Manager
 add_library(sage_tsdb_plugins
     plugin_manager.cpp
+    resource_manager.cpp
     adapters/pecj_adapter.cpp
     adapters/fault_detection_adapter.cpp
 )
 
 target_include_directories(sage_tsdb_plugins PUBLIC
     ${CMAKE_SOURCE_DIR}/include
-    ${CMAKE_SOURCE_DIR}/../PECJ/include  # PECJ headers
 )
+
+# Add PECJ include directory only if available
+if(DEFINED PECJ_DIR AND EXISTS "${PECJ_DIR}/include")
+    target_include_directories(sage_tsdb_plugins PUBLIC
+        ${PECJ_DIR}/include
+    )
+endif()
 
 target_link_libraries(sage_tsdb_plugins PUBLIC
     sage_tsdb_core

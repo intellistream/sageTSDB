@@ -46,8 +46,92 @@ add_library(sage_tsdb_core
     src/core/time_series_db.cpp
     src/core/storage_engine.cpp
     src/core/lsm_tree.cpp
+    src/core/stream_table.cpp
+    src/core/join_result_table.cpp
+    src/core/table_manager.cpp
     src/utils/config.cpp
 )
+
+# PECJ Integration Mode selection
+option(SAGE_TSDB_ENABLE_PECJ "Enable PECJ integration" OFF)
+set(PECJ_MODE "INTEGRATED" CACHE STRING "PECJ integration mode: PLUGIN or INTEGRATED")
+
+# Compute library (PECJ Deep Integration)
+if(SAGE_TSDB_ENABLE_PECJ AND PECJ_MODE STREQUAL "INTEGRATED")
+    message(STATUS "Building PECJ Compute Engine (Deep Integration Mode)")
+    add_definitions(-DPECJ_MODE_INTEGRATED)
+    
+    add_library(sage_tsdb_compute
+        src/compute/pecj_compute_engine.cpp
+        src/compute/window_scheduler.cpp
+    )
+    
+    target_include_directories(sage_tsdb_compute
+        PUBLIC
+            $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
+            $<INSTALL_INTERFACE:include>
+        PRIVATE
+            ${PROJECT_SOURCE_DIR}/src
+    )
+    
+    # Link sage_tsdb_core first
+    target_link_libraries(sage_tsdb_compute
+        PUBLIC
+            sage_tsdb_core
+    )
+    
+    # If PECJ directory is specified, add PECJ support
+    if(DEFINED PECJ_DIR)
+        get_filename_component(PECJ_DIR_ABS "${PECJ_DIR}" ABSOLUTE BASE_DIR "${CMAKE_CURRENT_SOURCE_DIR}")
+        set(PECJ_INCLUDE_DIR "${PECJ_DIR_ABS}/include")
+        set(PECJ_BUILD_DIR "${PECJ_DIR_ABS}/build")
+        
+        if(EXISTS "${PECJ_INCLUDE_DIR}")
+            target_include_directories(sage_tsdb_compute
+                PUBLIC
+                    ${PECJ_INCLUDE_DIR}
+            )
+            
+            # Find Torch for PECJ support
+            if(EXISTS "${PECJ_BUILD_DIR}/CMakeCache.txt")
+                file(STRINGS "${PECJ_BUILD_DIR}/CMakeCache.txt" TORCH_DIR_LINE REGEX "^Torch_DIR")
+                if(TORCH_DIR_LINE)
+                    string(REGEX REPLACE "^Torch_DIR:PATH=" "" TORCH_CMAKE_DIR "${TORCH_DIR_LINE}")
+                    set(CMAKE_PREFIX_PATH "${TORCH_CMAKE_DIR};${CMAKE_PREFIX_PATH}")
+                endif()
+            endif()
+            
+            find_package(Torch QUIET)
+            if(Torch_FOUND)
+                message(STATUS "  Torch found for compute engine: ${TORCH_LIBRARIES}")
+                target_include_directories(sage_tsdb_compute PUBLIC ${TORCH_INCLUDE_DIRS})
+                target_link_libraries(sage_tsdb_compute PUBLIC ${TORCH_LIBRARIES})
+                target_compile_definitions(sage_tsdb_compute PUBLIC TORCH_AVAILABLE=1)
+            endif()
+            
+            # Find PECJ library
+            find_library(PECJ_LIBRARY
+                NAMES IntelliStreamOoOJoin libIntelliStreamOoOJoin
+                HINTS ${PECJ_BUILD_DIR} ${PECJ_DIR_ABS}/build
+                PATH_SUFFIXES lib lib64 src
+            )
+            
+            if(PECJ_LIBRARY)
+                message(STATUS "  PECJ library found for compute engine: ${PECJ_LIBRARY}")
+                target_link_libraries(sage_tsdb_compute PUBLIC ${PECJ_LIBRARY})
+                target_compile_definitions(sage_tsdb_compute PUBLIC PECJ_LIBRARY_AVAILABLE=1)
+                
+                # Check if PECJ_FULL_INTEGRATION is requested
+                if(PECJ_FULL_INTEGRATION)
+                    message(STATUS "  Enabling PECJ_FULL_INTEGRATION for compute engine")
+                    target_compile_definitions(sage_tsdb_compute PUBLIC PECJ_FULL_INTEGRATION=1)
+                endif()
+            endif()
+        endif()
+    endif()
+    
+    message(STATUS "Built library: sage_tsdb_compute (with WindowScheduler)")
+endif()
 
 target_include_directories(sage_tsdb_core
     PUBLIC
@@ -111,6 +195,7 @@ if(BUILD_PLUGINS)
         if(EXISTS "${PECJ_INCLUDE_DIR}")
             add_library(sage_tsdb_plugins
                 src/plugins/plugin_manager.cpp
+                src/plugins/resource_manager.cpp
                 src/plugins/adapters/pecj_adapter.cpp
                 src/plugins/adapters/fault_detection_adapter.cpp
             )
@@ -127,10 +212,37 @@ if(BUILD_PLUGINS)
             # Check for PECJ library and enable full integration
             if(PECJ_FULL_INTEGRATION)
                 # Find Torch first (required by PECJ)
-                find_package(Torch REQUIRED)
+                # Try to find Torch from PECJ's CMakeCache
+                if(EXISTS "${PECJ_BUILD_DIR}/CMakeCache.txt")
+                    file(STRINGS "${PECJ_BUILD_DIR}/CMakeCache.txt" TORCH_DIR_LINE REGEX "^Torch_DIR")
+                    if(TORCH_DIR_LINE)
+                        string(REGEX REPLACE "^Torch_DIR:PATH=" "" TORCH_CMAKE_DIR "${TORCH_DIR_LINE}")
+                        message(STATUS "Found Torch path from PECJ build: ${TORCH_CMAKE_DIR}")
+                        set(CMAKE_PREFIX_PATH "${TORCH_CMAKE_DIR};${CMAKE_PREFIX_PATH}")
+                    endif()
+                endif()
+                
+                find_package(Torch QUIET)
                 if(Torch_FOUND)
-                    message(STATUS "Found Torch: ${TORCH_LIBRARIES}")
-                    message(STATUS "Torch include dirs: ${TORCH_INCLUDE_DIRS}")
+                    message(STATUS "✓ Found Torch: ${TORCH_LIBRARIES}")
+                    message(STATUS "  Torch version: ${Torch_VERSION}")
+                    message(STATUS "  Torch include dirs: ${TORCH_INCLUDE_DIRS}")
+                    message(STATUS "  Torch library dirs: ${TORCH_LIBRARY_DIRS}")
+                else()
+                    message(WARNING "✗ Torch not found - trying manual path from user Python install")
+                    set(TORCH_INSTALL_PREFIX "/home/cdb/.local/lib/python3.10/site-packages/torch")
+                    if(EXISTS "${TORCH_INSTALL_PREFIX}/share/cmake/Torch")
+                        set(Torch_DIR "${TORCH_INSTALL_PREFIX}/share/cmake/Torch")
+                        find_package(Torch QUIET)
+                        if(Torch_FOUND)
+                            message(STATUS "✓ Found Torch from user install: ${TORCH_LIBRARIES}")
+                        endif()
+                    endif()
+                endif()
+                
+                if(NOT Torch_FOUND)
+                    message(FATAL_ERROR "Torch is required for PECJ_FULL_INTEGRATION but not found. "
+                                        "Please install libtorch or disable PECJ_FULL_INTEGRATION")
                 endif()
                 
                 # Find PECJ library (IntelliStreamOoOJoin is the actual library name)
@@ -172,8 +284,12 @@ if(BUILD_PLUGINS)
             message(WARNING "Building plugins without PECJ support")
         endif()
     else()
-        message(STATUS "PECJ_DIR not set, skipping plugin build")
-        message(STATUS "To enable plugins: cmake -DPECJ_DIR=/path/to/PECJ ..")
+        # Build plugins in Stub mode (without PECJ)
+        message(STATUS "PECJ_DIR not set, building plugins in Stub mode")
+        message(STATUS "To enable full PECJ support: cmake -DPECJ_DIR=/path/to/PECJ -DPECJ_FULL_INTEGRATION=ON ..")
+        
+        # Build basic plugin infrastructure without PECJ
+        add_subdirectory(src/plugins)
     endif()
 endif()
 
@@ -290,8 +406,10 @@ message(STATUS "  Build tests: ${BUILD_TESTS}")
 message(STATUS "  Build Python bindings: ${BUILD_PYTHON_BINDINGS}")
 message(STATUS "  Build shared libs: ${BUILD_SHARED_LIBS}")
 message(STATUS "  Build plugins: ${BUILD_PLUGINS}")
-if(TARGET sage_tsdb_plugins)
+if(DEFINED PECJ_DIR AND EXISTS "${PECJ_DIR}/include")
     message(STATUS "  PECJ support: YES (${PECJ_DIR})")
+elseif(TARGET sage_tsdb_plugins)
+    message(STATUS "  PECJ support: STUB (plugin infrastructure only)")
 else()
     message(STATUS "  PECJ support: NO")
 endif()

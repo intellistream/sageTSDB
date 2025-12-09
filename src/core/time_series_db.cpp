@@ -1,6 +1,8 @@
 #include "sage_tsdb/core/time_series_db.h"
 #include "sage_tsdb/core/storage_engine.h"
 #include "sage_tsdb/algorithms/algorithm_base.h"
+#include "sage_tsdb/plugins/resource_manager.h"
+#include <stdexcept>
 
 namespace sage_tsdb {
 
@@ -8,9 +10,119 @@ TimeSeriesDB::TimeSeriesDB()
     : index_(std::make_unique<TimeSeriesIndex>()),
       query_count_(0),
       write_count_(0),
-      storage_engine_(std::make_unique<StorageEngine>()) {}
+      storage_engine_(std::make_unique<StorageEngine>()),
+      resource_manager_(nullptr) {}
 
 TimeSeriesDB::~TimeSeriesDB() = default;
+
+// ========== Multi-Table Management Implementation ==========
+
+bool TimeSeriesDB::createTable(const std::string& name, TableType type) {
+    // Check if table already exists
+    if (tables_.find(name) != tables_.end()) {
+        return false;
+    }
+    
+    // Create new index for this table
+    tables_[name] = std::make_unique<TimeSeriesIndex>();
+    table_types_[name] = type;
+    
+    return true;
+}
+
+bool TimeSeriesDB::dropTable(const std::string& name) {
+    auto it = tables_.find(name);
+    if (it == tables_.end()) {
+        return false;
+    }
+    
+    tables_.erase(it);
+    table_types_.erase(name);
+    
+    return true;
+}
+
+bool TimeSeriesDB::hasTable(const std::string& name) const {
+    return tables_.find(name) != tables_.end();
+}
+
+std::vector<std::string> TimeSeriesDB::listTables() const {
+    std::vector<std::string> names;
+    names.reserve(tables_.size());
+    
+    for (const auto& [name, _] : tables_) {
+        names.push_back(name);
+    }
+    
+    return names;
+}
+
+size_t TimeSeriesDB::insert(const std::string& table_name, const TimeSeriesData& data) {
+    auto* table_index = getTableIndex(table_name);
+    if (!table_index) {
+        throw std::runtime_error("Table not found: " + table_name);
+    }
+    
+    ++write_count_;
+    return table_index->add(data);
+}
+
+std::vector<size_t> TimeSeriesDB::insertBatch(const std::string& table_name,
+                                                const std::vector<TimeSeriesData>& data_list) {
+    auto* table_index = getTableIndex(table_name);
+    if (!table_index) {
+        throw std::runtime_error("Table not found: " + table_name);
+    }
+    
+    write_count_ += data_list.size();
+    return table_index->add_batch(data_list);
+}
+
+std::vector<TimeSeriesData> TimeSeriesDB::query(const std::string& table_name,
+                                                  const QueryConfig& config) const {
+    const auto* table_index = getTableIndex(table_name);
+    if (!table_index) {
+        throw std::runtime_error("Table not found: " + table_name);
+    }
+    
+    ++query_count_;
+    return table_index->query(config);
+}
+
+std::vector<TimeSeriesData> TimeSeriesDB::query(const std::string& table_name,
+                                                  const TimeRange& time_range,
+                                                  const Tags& filter_tags) const {
+    QueryConfig config(time_range, filter_tags);
+    return query(table_name, config);
+}
+
+TimeSeriesIndex* TimeSeriesDB::getTableIndex(const std::string& table_name) {
+    auto it = tables_.find(table_name);
+    if (it != tables_.end()) {
+        return it->second.get();
+    }
+    return nullptr;
+}
+
+const TimeSeriesIndex* TimeSeriesDB::getTableIndex(const std::string& table_name) const {
+    auto it = tables_.find(table_name);
+    if (it != tables_.end()) {
+        return it->second.get();
+    }
+    return nullptr;
+}
+
+// ========== Resource Management Implementation ==========
+
+std::shared_ptr<ResourceManager> TimeSeriesDB::getResourceManager() const {
+    return resource_manager_;
+}
+
+void TimeSeriesDB::setResourceManager(std::shared_ptr<ResourceManager> resource_manager) {
+    resource_manager_ = resource_manager;
+}
+
+// ========== Default Table API (backward compatible) ==========
 
 size_t TimeSeriesDB::add(const TimeSeriesData& data) {
     ++write_count_;
