@@ -7,6 +7,9 @@
 #include <memory>
 #include <stdexcept>
 #include <functional>
+#include <iostream>
+#include <algorithm>
+#include "sage_tsdb/core/time_series_data.h"
 
 namespace sage_tsdb {
 namespace utils {
@@ -26,6 +29,20 @@ struct PECJTuple {
     
     PECJTuple(uint64_t k, double v, uint64_t et, uint64_t at)
         : key(k), value(v), eventTime(et), arrivalTime(at) {}
+};
+
+/**
+ * @brief CSV记录结构（兼容旧API）
+ * 
+ * Note: PECJ CSV files use different time units:
+ * - eventTime: typically in microseconds (us) in the CSV
+ * - arrivalTime: typically in microseconds (us) in the CSV
+ */
+struct CSVRecord {
+    int64_t key;
+    double value;
+    int64_t event_time;     // Time in original CSV unit
+    int64_t arrival_time;   // Time in original CSV unit
 };
 
 /**
@@ -161,6 +178,124 @@ public:
      */
     const std::string& getFilePath() const { return filepath_; }
 
+    // ========== 兼容性静态方法（用于旧版本API） ==========
+    
+    /**
+     * @brief Load data from a PECJ-format CSV file (静态方法，兼容旧API)
+     * @param filename Path to CSV file
+     * @param time_unit_multiplier Multiplier to convert time to microseconds (e.g., 1000 for ms->us, 1 for us->us)
+     * @return Vector of CSV records, empty on error
+     */
+    static std::vector<CSVRecord> loadFromFile(const std::string& filename, int64_t time_unit_multiplier = 1) {
+        std::vector<CSVRecord> records;
+        std::ifstream file(filename);
+        
+        if (!file.is_open()) {
+            std::cerr << "❌ Failed to open file: " << filename << std::endl;
+            return records;
+        }
+        
+        std::string line;
+        bool is_header = true;
+        size_t line_num = 0;
+        
+        // Column indices (default for PECJ format)
+        int idx_key = 0, idx_value = 1, idx_event_time = 2, idx_arrival_time = 3;
+        
+        while (std::getline(file, line)) {
+            line_num++;
+            
+            // Remove trailing \r if present (Windows line endings)
+            if (!line.empty() && line.back() == '\r') {
+                line.pop_back();
+            }
+            
+            if (line.empty()) continue;
+            
+            std::vector<std::string> tokens = split(line, ',');
+            
+            if (is_header) {
+                // Parse header to find column indices
+                for (size_t i = 0; i < tokens.size(); i++) {
+                    if (tokens[i] == "key") idx_key = i;
+                    else if (tokens[i] == "value") idx_value = i;
+                    else if (tokens[i] == "eventTime") idx_event_time = i;
+                    else if (tokens[i] == "arrivalTime" || tokens[i] == "arriveTime") {
+                        idx_arrival_time = i;
+                    }
+                }
+                is_header = false;
+                continue;
+            }
+            
+            // Parse data row
+            if (tokens.size() < 4) {
+                std::cerr << "⚠ Skipping invalid line " << line_num << ": " << line << std::endl;
+                continue;
+            }
+            
+            try {
+                CSVRecord record;
+                record.key = std::stoll(tokens[idx_key]);
+                record.value = std::stod(tokens[idx_value]);
+                // Apply time unit conversion (e.g., milliseconds to microseconds)
+                record.event_time = static_cast<int64_t>(std::stod(tokens[idx_event_time]) * time_unit_multiplier);
+                record.arrival_time = static_cast<int64_t>(std::stod(tokens[idx_arrival_time]) * time_unit_multiplier);
+                records.push_back(record);
+            } catch (const std::exception& e) {
+                std::cerr << "⚠ Error parsing line " << line_num << ": " << e.what() << std::endl;
+            }
+        }
+        
+        file.close();
+        std::cout << "✓ Loaded " << records.size() << " records from " << filename << std::endl;
+        return records;
+    }
+    
+    /**
+     * @brief Convert CSV record to TimeSeriesData (静态方法，兼容旧API)
+     * @param record CSV record
+     * @param stream_name Stream identifier ("S" or "R")
+     * @return TimeSeriesData object
+     */
+    static TimeSeriesData toTimeSeriesData(const CSVRecord& record, const std::string& stream_name) {
+        TimeSeriesData data;
+        data.timestamp = record.event_time;  // Use event_time as timestamp
+        data.tags["stream"] = stream_name;
+        data.tags["key"] = std::to_string(record.key);
+        data.fields["value"] = std::to_string(record.value);
+        data.fields["arrival_time"] = std::to_string(record.arrival_time);
+        return data;
+    }
+    
+    /**
+     * @brief Get statistics about loaded data (静态方法，兼容旧API)
+     */
+    static void printStatistics(const std::vector<CSVRecord>& records, const std::string& name) {
+        if (records.empty()) {
+            std::cout << "[" << name << "] No data\n";
+            return;
+        }
+        
+        int64_t min_event_time = records[0].event_time;
+        int64_t max_event_time = records[0].event_time;
+        int64_t min_key = records[0].key;
+        int64_t max_key = records[0].key;
+        
+        for (const auto& r : records) {
+            min_event_time = std::min(min_event_time, r.event_time);
+            max_event_time = std::max(max_event_time, r.event_time);
+            min_key = std::min(min_key, r.key);
+            max_key = std::max(max_key, r.key);
+        }
+        
+        std::cout << "\n[" << name << " Statistics]\n";
+        std::cout << "  Records           : " << records.size() << "\n";
+        std::cout << "  Time Range        : [" << min_event_time << ", " << max_event_time << "] us\n";
+        std::cout << "  Duration          : " << (max_event_time - min_event_time) / 1000.0 << " ms\n";
+        std::cout << "  Key Range         : [" << min_key << ", " << max_key << "]\n";
+    }
+
 private:
     /**
      * @brief 解析一行 CSV 数据
@@ -194,6 +329,21 @@ private:
         } catch (const std::exception& e) {
             throw std::runtime_error("Failed to parse numeric values: " + std::string(e.what()));
         }
+    }
+    
+    /**
+     * @brief Split string by delimiter (静态辅助函数)
+     */
+    static std::vector<std::string> split(const std::string& str, char delimiter) {
+        std::vector<std::string> tokens;
+        std::stringstream ss(str);
+        std::string token;
+        
+        while (std::getline(ss, token, delimiter)) {
+            tokens.push_back(token);
+        }
+        
+        return tokens;
     }
     
     std::string filepath_;

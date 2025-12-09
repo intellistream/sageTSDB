@@ -1,4 +1,4 @@
-# Deep Integration Demo - Real Dataset Usage Guide
+  # Deep Integration Demo - Real Dataset Usage Guide
 
 ## Overview
 
@@ -41,6 +41,8 @@ make deep_integration_demo -j4
 
 ### 2. Run with Default Settings
 
+**Note**: By default, the demo assumes CSV timestamps are in **milliseconds** and converts them to microseconds internally.
+
 ```bash
 cd build/examples
 ./deep_integration_demo \
@@ -55,22 +57,24 @@ cd build/examples
   Stream S File         : .../sTuple.csv
   Stream R File         : .../rTuple.csv
   Max Events per Stream : S=60000, R=60000
-  Window Length         : 5 ms
-  Slide Length          : 0.5 ms
+  CSV Time Unit         : milliseconds (ms)
+  Window Length         : 1000 ms
+  Slide Length          : 500 ms
 
 [Data Loading]
   Stream S Loaded       : 60000 events
   Stream R Loaded       : 60000 events
-  Load Time             : 92 ms
+  Load Time             : 97 ms
+  Data Time Span        : 992 ms
 
 [Window Computation]
-  Windows Triggered     : 2
-  Join Results          : 26,192
-  Computation Time      : 84 ms
+  Windows Triggered     : 10
+  Join Results          : 191,012
+  Computation Time      : 95 ms
 
 [Overall Performance]
-  Total Time            : 492 ms
-  Overall Throughput    : 243,902 events/s
+  Total Time            : 511 ms
+  Overall Throughput    : 234,834 events/s
 ```
 
 ## Command-Line Options
@@ -84,6 +88,7 @@ cd build/examples
 | `--window-us N` | Window length (microseconds) | 10000 (10ms) |
 | `--slide-us N` | Slide length (microseconds) | 5000 (5ms) |
 | `--threads N` | Max computation threads | 4 |
+| `--time-unit UNIT` | CSV time unit: 'ms' or 'us' | ms (milliseconds) |
 | `--quiet` | Reduce output verbosity | false |
 | `--help` | Show help message | - |
 
@@ -95,11 +100,11 @@ cd build/examples
 ./deep_integration_demo \
   --s-file /path/to/sTuple.csv \
   --r-file /path/to/rTuple.csv \
-  --window-us 5000 \
-  --slide-us 500
+  --window-us 500000 \
+  --slide-us 100000
 ```
 
-**Result**: ~3 windows, 26K+ joins
+**Result**: 10 windows, 191K+ joins (with 1 second data)
 
 ### Scenario 2: Large Window (Fewer Windows, More Joins per Window)
 
@@ -107,11 +112,11 @@ cd build/examples
 ./deep_integration_demo \
   --s-file /path/to/sTuple.csv \
   --r-file /path/to/rTuple.csv \
-  --window-us 20000 \
-  --slide-us 10000
+  --window-us 2000000 \
+  --slide-us 1000000
 ```
 
-**Result**: 1-2 windows, higher join count per window
+**Result**: 1-2 windows, higher join count per window (2s windows)
 
 ### Scenario 3: Limited Data (Faster Testing)
 
@@ -125,7 +130,20 @@ cd build/examples
 
 **Result**: Quick test with 20K events
 
-### Scenario 4: More Threads (Better Performance)
+### Scenario 4: Different Time Unit (Microseconds)
+
+```bash
+./deep_integration_demo \
+  --s-file /path/to/sTuple.csv \
+  --r-file /path/to/rTuple.csv \
+  --time-unit us \
+  --window-us 5000 \
+  --slide-us 500
+```
+
+**Result**: Treats CSV timestamps as microseconds (for datasets already in us)
+
+### Scenario 5: More Threads (Better Performance)
 
 ```bash
 ./deep_integration_demo \
@@ -175,20 +193,28 @@ Join Results → sageTSDB (join_results table)
 
 ## Performance Considerations
 
+### CSV Time Unit Handling
+
+**Important**: PECJ CSV files typically use **milliseconds** for timestamps, but sageTSDB and PECJ internally work with **microseconds**.
+
+The demo handles this automatically:
+- **Default**: `--time-unit ms` → converts CSV milliseconds to microseconds (×1000)
+- **Optional**: `--time-unit us` → treats CSV as already in microseconds (×1)
+
 ### Factors Affecting Window Count
 
 The number of windows triggered depends on:
-- **Data time span**: Time range in the dataset (e.g., 0.992ms for default sTuple.csv)
+- **Data time span**: Time range in the dataset (e.g., 992ms for default sTuple.csv with ms unit)
 - **Slide length**: Smaller slide → more windows
 - **Formula**: `num_windows = (data_time_span / slide_len) + 1`
 
 ### Typical Results
 
-With default PECJ datasets:
-- **Data time span**: ~1ms
-- **Window 10ms, Slide 5ms**: 1 window
-- **Window 5ms, Slide 0.5ms**: 2-3 windows
-- **Window 1ms, Slide 0.1ms**: 10-15 windows
+With default PECJ datasets (milliseconds unit):
+- **Data time span**: ~992ms (after conversion to us)
+- **Window 1000ms, Slide 500ms**: 2 windows
+- **Window 500ms, Slide 100ms**: 10 windows
+- **Window 100ms, Slide 50ms**: 20 windows
 
 ### Join Result Count
 
@@ -204,8 +230,9 @@ Depends on:
 | Data Source | Random generator | PECJ CSV files |
 | Events | 20K fixed | Up to 120K+ |
 | Windows | 1 (always) | 1-1000 (configurable) |
-| Join Results | ~126K | 4K-30K+ (realistic) |
-| Time Span | Artificial | Real benchmark data |
+| Join Results | ~126K | 26K-191K+ (realistic) |
+| Time Span | Artificial (~1ms) | Real benchmark (~992ms) |
+| Time Unit | Fixed (us) | Configurable (ms/us) |
 | Realism | Low | High |
 
 ## Troubleshooting
@@ -219,12 +246,18 @@ Depends on:
 
 ### Problem: Only 1 window triggered
 
-**Explanation**: Data time span is very short (~1ms in default dataset)
+**Explanation**: This likely means you're using `--time-unit us` when the CSV is actually in milliseconds, resulting in a very short time span (~1ms).
 
 **Solutions**:
-1. Reduce slide length: `--slide-us 100`
-2. Use dataset with larger time span
-3. Generate custom data with longer duration
+1. Use correct time unit: `--time-unit ms` (default)
+2. Reduce slide length: `--slide-us 100000` (100ms)
+3. Check your CSV timestamps - are they in ms or us?
+
+### Problem: Time span seems too large/small
+
+**Solution**: Verify CSV time unit
+- If time span shows as ~1ms but you have 1-second data → use `--time-unit ms`
+- If time span shows as ~1000s but you have 1-second data → use `--time-unit us`
 
 ### Problem: No join results in final query
 

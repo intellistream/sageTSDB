@@ -26,7 +26,7 @@
 
 #include "sage_tsdb/core/time_series_db.h"
 #include "sage_tsdb/core/time_series_data.h"
-#include "csv_data_loader.h"
+#include "sage_tsdb/utils/csv_data_loader.h"
 
 #ifdef PECJ_MODE_INTEGRATED
 #include "sage_tsdb/compute/pecj_compute_engine.h"
@@ -46,14 +46,19 @@ struct DemoConfig {
     size_t max_events_s = 60000;
     size_t max_events_r = 60000;
     
+    // Time unit conversion
+    // Set to 1000 if CSV times are in milliseconds (ms -> us)
+    // Set to 1 if CSV times are already in microseconds
+    int64_t time_unit_multiplier = 1000;  // Default: assume CSV is in milliseconds
+    
     // Window parameters (microseconds)
     uint64_t window_len_us = 10000;       // 10ms window
     uint64_t slide_len_us = 5000;         // 5ms slide
     uint64_t watermark_us = 2000;         // 2ms watermark
     
     // Resource limits
-    int max_threads = 4;
-    size_t max_memory_mb = 512;
+    int max_threads = 8;
+    size_t max_memory_mb = 512;            // 512 MB
     
     // Display
     bool verbose = true;
@@ -169,6 +174,7 @@ void printConfig(const DemoConfig& config) {
     std::cout << "  Stream R File         : " << config.r_file << "\n";
     std::cout << "  Max Events per Stream : S=" << config.max_events_s 
               << ", R=" << config.max_events_r << "\n";
+    std::cout << "  CSV Time Unit         : " << (config.time_unit_multiplier == 1000 ? "milliseconds (ms)" : "microseconds (us)") << "\n";
     std::cout << "  Window Length         : " << (config.window_len_us / 1000.0) << " ms\n";
     std::cout << "  Slide Length          : " << (config.slide_len_us / 1000.0) << " ms\n";
     std::cout << "  Watermark Delay       : " << (config.watermark_us / 1000.0) << " ms\n";
@@ -202,6 +208,15 @@ int main(int argc, char** argv) {
             config.slide_len_us = std::stoull(argv[++i]);
         } else if (arg == "--threads" && i + 1 < argc) {
             config.max_threads = std::stoi(argv[++i]);
+        } else if (arg == "--time-unit" && i + 1 < argc) {
+            std::string unit = argv[++i];
+            if (unit == "ms" || unit == "milliseconds") {
+                config.time_unit_multiplier = 1000;  // ms to us
+            } else if (unit == "us" || unit == "microseconds") {
+                config.time_unit_multiplier = 1;     // already us
+            } else {
+                std::cerr << "⚠ Unknown time unit: " << unit << " (use 'ms' or 'us')\n";
+            }
         } else if (arg == "--quiet") {
             config.verbose = false;
         } else if (arg == "--help") {
@@ -214,6 +229,7 @@ int main(int argc, char** argv) {
                       << "  --window-us N     Window length in microseconds (default: 10000)\n"
                       << "  --slide-us N      Slide length in microseconds (default: 5000)\n"
                       << "  --threads N       Max threads (default: 4)\n"
+                      << "  --time-unit UNIT  CSV time unit: 'ms' or 'us' (default: ms)\n"
                       << "  --quiet           Reduce output verbosity\n"
                       << "  --help            Show this help\n";
             return 0;
@@ -287,9 +303,11 @@ int main(int argc, char** argv) {
     // Step 3: Load Data from CSV Files
     // ========================================================================
     std::cout << "[Step 3] Loading data from CSV files...\n";
+    std::cout << "  Time unit conversion: " 
+              << (config.time_unit_multiplier == 1000 ? "ms → us (×1000)" : "us → us (×1)") << "\n\n";
     
-    auto s_records = CSVDataLoader::loadFromFile(config.s_file);
-    auto r_records = CSVDataLoader::loadFromFile(config.r_file);
+    auto s_records = CSVDataLoader::loadFromFile(config.s_file, config.time_unit_multiplier);
+    auto r_records = CSVDataLoader::loadFromFile(config.r_file, config.time_unit_multiplier);
     
     if (s_records.empty() || r_records.empty()) {
         std::cerr << "❌ Failed to load data files\n";
