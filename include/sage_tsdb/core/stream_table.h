@@ -7,6 +7,9 @@
 #include <string>
 #include <vector>
 #include <mutex>
+#include <unordered_map>
+#include <chrono>
+#include <shared_mutex>
 
 namespace sage_tsdb {
 
