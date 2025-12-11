@@ -23,6 +23,7 @@
 #include <vector>
 #include <algorithm>
 #include <fstream>
+#include <random>
 
 #include "sage_tsdb/core/time_series_db.h"
 #include "sage_tsdb/core/time_series_data.h"
@@ -43,8 +44,8 @@ struct DemoConfig {
     // Data files
     std::string s_file = "../../../PECJ/benchmark/datasets/sTuple.csv";
     std::string r_file = "../../../PECJ/benchmark/datasets/rTuple.csv";
-    size_t max_events_s = 60000;
-    size_t max_events_r = 60000;
+    size_t max_events_s = 200000;          // Increased from 60000
+    size_t max_events_r = 200000;          // Increased from 60000
     
     // Time unit conversion
     // Set to 1000 if CSV times are in milliseconds (ms -> us)
@@ -56,14 +57,20 @@ struct DemoConfig {
     uint64_t slide_len_us = 5000;         // 5ms slide
     uint64_t watermark_us = 2000;         // 2ms watermark
     
+    // Out-of-order simulation
+    bool enable_disorder = true;           // Enable out-of-order simulation
+    double disorder_ratio = 0.3;           // 30% of events will be out-of-order
+    int64_t max_disorder_us = 5000;        // Max disorder delay: 5ms
+    
     // Resource limits
     int max_threads = 8;
-    size_t max_memory_mb = 512;            // 512 MB
+    size_t max_memory_mb = 1024;           // Increased to 1GB
     
     // Display
     bool verbose = true;
-    size_t progress_interval = 5000;
+    size_t progress_interval = 10000;      // Show progress every 10k events
     size_t show_samples = 10;
+    bool show_disorder_stats = true;       // Show disorder statistics
 };
 
 // ============================================================================
@@ -79,32 +86,56 @@ struct DemoStats {
     std::atomic<size_t> join_results{0};
     std::atomic<size_t> total_computation_time_us{0};
     
+    // Disorder statistics
+    std::atomic<size_t> disordered_events{0};
+    std::atomic<size_t> late_arrivals{0};          // Events arriving after watermark
+    int64_t max_observed_disorder_us = 0;
+    int64_t avg_disorder_us = 0;
+    
     int64_t data_time_range_us = 0;
     
     std::chrono::steady_clock::time_point start_time;
     std::chrono::steady_clock::time_point end_time;
     std::chrono::steady_clock::time_point load_end_time;
     std::chrono::steady_clock::time_point insert_end_time;
+    std::chrono::steady_clock::time_point disorder_end_time;
     
     void print() const {
         auto total_duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
             end_time - start_time).count();
         auto load_duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
             load_end_time - start_time).count();
+        auto disorder_duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+            disorder_end_time - load_end_time).count();
         auto insert_duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-            insert_end_time - load_end_time).count();
+            insert_end_time - disorder_end_time).count();
         auto compute_duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
             end_time - insert_end_time).count();
         
-        std::cout << "\n" << std::string(70, '=') << "\n";
-        std::cout << "Demo Performance Report (Real Dataset)\n";
-        std::cout << std::string(70, '=') << "\n\n";
+        std::cout << "\n" << std::string(80, '=') << "\n";
+        std::cout << "Demo Performance Report - High Disorder & Large Scale\n";
+        std::cout << std::string(80, '=') << "\n\n";
         
         std::cout << "[Data Loading]\n";
         std::cout << "  Stream S Loaded       : " << events_loaded_s << " events\n";
         std::cout << "  Stream R Loaded       : " << events_loaded_r << " events\n";
+        std::cout << "  Total Loaded          : " << (events_loaded_s + events_loaded_r) << " events\n";
         std::cout << "  Load Time             : " << load_duration_ms << " ms\n";
+        std::cout << "  Load Throughput       : " 
+                  << std::fixed << std::setprecision(0)
+                  << ((load_duration_ms > 0) ? (events_loaded_s + events_loaded_r) * 1000.0 / load_duration_ms : 0.0) 
+                  << " events/s\n";
         std::cout << "  Data Time Span        : " << (data_time_range_us / 1000.0) << " ms\n\n";
+        
+        std::cout << "[Out-of-Order Simulation]\n";
+        std::cout << "  Disordered Events     : " << disordered_events 
+                  << " (" << std::fixed << std::setprecision(1) 
+                  << (100.0 * disordered_events / (events_loaded_s + events_loaded_r)) << "%)\n";
+        std::cout << "  Late Arrivals         : " << late_arrivals 
+                  << " (events arriving after watermark)\n";
+        std::cout << "  Max Disorder Delay    : " << (max_observed_disorder_us / 1000.0) << " ms\n";
+        std::cout << "  Avg Disorder Delay    : " << (avg_disorder_us / 1000.0) << " ms\n";
+        std::cout << "  Simulation Time       : " << disorder_duration_ms << " ms\n\n";
         
         std::cout << "[Data Ingestion]\n";
         std::cout << "  Stream S Inserted     : " << events_inserted_s << " events\n";
@@ -119,9 +150,15 @@ struct DemoStats {
         std::cout << "[Window Computation]\n";
         std::cout << "  Windows Triggered     : " << windows_triggered << "\n";
         std::cout << "  Join Results          : " << join_results << "\n";
+        std::cout << "  Avg Results/Window    : " 
+                  << (windows_triggered > 0 ? join_results / windows_triggered : 0) << "\n";
         std::cout << "  Computation Time      : " << compute_duration_ms << " ms\n";
         std::cout << "  Avg per Window (us)   : " 
-                  << (windows_triggered > 0 ? total_computation_time_us / windows_triggered : 0) << "\n\n";
+                  << (windows_triggered > 0 ? total_computation_time_us / windows_triggered : 0) << "\n";
+        std::cout << "  Computation Throughput: " 
+                  << std::fixed << std::setprecision(0)
+                  << ((compute_duration_ms > 0) ? join_results * 1000.0 / compute_duration_ms : 0.0) 
+                  << " joins/s\n\n";
         
         std::cout << "[Overall Performance]\n";
         std::cout << "  Total Time            : " << total_duration_ms << " ms\n";
@@ -129,8 +166,11 @@ struct DemoStats {
                   << std::fixed << std::setprecision(0)
                   << ((total_duration_ms > 0) ? (events_inserted_s + events_inserted_r) * 1000.0 / total_duration_ms : 0.0) 
                   << " events/s\n";
+        std::cout << "  End-to-End Latency    : " 
+                  << std::fixed << std::setprecision(2)
+                  << (total_duration_ms / 1000.0) << " seconds\n";
         
-        std::cout << "\n" << std::string(70, '=') << "\n";
+        std::cout << "\n" << std::string(80, '=') << "\n";
     }
 };
 
@@ -144,6 +184,8 @@ struct DemoStats {
 struct EventWithArrival {
     TimeSeriesData data;
     int64_t arrival_time;
+    int64_t event_time;       // Original event time for disorder calculation
+    bool is_disordered;
     
     bool operator<(const EventWithArrival& other) const {
         return arrival_time < other.arrival_time;
@@ -154,16 +196,74 @@ struct EventWithArrival {
 // Helper Functions
 // ============================================================================
 
+/**
+ * @brief Apply out-of-order simulation to events
+ */
+void applyDisorder(std::vector<EventWithArrival>& events, 
+                   const DemoConfig& config, 
+                   DemoStats& stats) {
+    if (!config.enable_disorder) {
+        return;
+    }
+    
+    std::cout << "\n[Disorder Simulation]\n";
+    std::cout << "  Disorder Ratio        : " << (config.disorder_ratio * 100) << "%\n";
+    std::cout << "  Max Disorder Delay    : " << (config.max_disorder_us / 1000.0) << " ms\n";
+    
+    std::random_device rd;
+    std::mt19937 gen(rd());
+    std::uniform_real_distribution<> disorder_prob(0.0, 1.0);
+    std::uniform_int_distribution<int64_t> disorder_delay(0, config.max_disorder_us);
+    
+    int64_t total_disorder = 0;
+    int64_t max_disorder = 0;
+    
+    for (auto& evt : events) {
+        if (disorder_prob(gen) < config.disorder_ratio) {
+            int64_t delay = disorder_delay(gen);
+            evt.arrival_time += delay;
+            evt.is_disordered = true;
+            stats.disordered_events++;
+            total_disorder += delay;
+            max_disorder = std::max(max_disorder, delay);
+            
+            // Check if it's a late arrival (beyond watermark)
+            if (delay > config.watermark_us) {
+                stats.late_arrivals++;
+            }
+        }
+    }
+    
+    stats.max_observed_disorder_us = max_disorder;
+    if (stats.disordered_events > 0) {
+        stats.avg_disorder_us = total_disorder / stats.disordered_events;
+    }
+    
+    // Re-sort after applying disorder
+    std::sort(events.begin(), events.end());
+    
+    std::cout << "  Applied to            : " << stats.disordered_events << " events\n";
+    std::cout << "  Max Disorder Applied  : " << (max_disorder / 1000.0) << " ms\n";
+    std::cout << "  Avg Disorder Applied  : " << (stats.avg_disorder_us / 1000.0) << " ms\n";
+    std::cout << "  Late Arrivals         : " << stats.late_arrivals << " events\n";
+    std::cout << "\n";
+}
+
 void printHeader() {
     std::cout << R"(
 ╔════════════════════════════════════════════════════════════════════╗
-║     sageTSDB + PECJ Deep Integration Demo (Real Dataset)          ║
+║   sageTSDB + PECJ: High Disorder & Large Scale Performance Demo   ║
+║                                                                    ║
+║  Test Scenario:                                                   ║
+║  - Large-scale real-world datasets (100K+ events)                 ║
+║  - High out-of-order arrival simulation (30% disorder)            ║
+║  - Late event handling with watermark                             ║
+║  - Multi-threaded sliding window joins                            ║
 ║                                                                    ║
 ║  Architecture: Database-Centric Design                            ║
-║  - Real PECJ benchmark datasets (CSV)                             ║
 ║  - All data stored in sageTSDB tables                             ║
 ║  - PECJ as stateless compute engine                               ║
-║  - Multiple sliding windows triggered                             ║
+║  - ResourceManager controls threads & memory                      ║
 ╚════════════════════════════════════════════════════════════════════╝
 )" << std::endl;
 }
@@ -174,10 +274,16 @@ void printConfig(const DemoConfig& config) {
     std::cout << "  Stream R File         : " << config.r_file << "\n";
     std::cout << "  Max Events per Stream : S=" << config.max_events_s 
               << ", R=" << config.max_events_r << "\n";
+    std::cout << "  Total Scale           : ~" << (config.max_events_s + config.max_events_r) << " events\n";
     std::cout << "  CSV Time Unit         : " << (config.time_unit_multiplier == 1000 ? "milliseconds (ms)" : "microseconds (us)") << "\n";
     std::cout << "  Window Length         : " << (config.window_len_us / 1000.0) << " ms\n";
     std::cout << "  Slide Length          : " << (config.slide_len_us / 1000.0) << " ms\n";
     std::cout << "  Watermark Delay       : " << (config.watermark_us / 1000.0) << " ms\n";
+    std::cout << "  Disorder Enabled      : " << (config.enable_disorder ? "YES" : "NO") << "\n";
+    if (config.enable_disorder) {
+        std::cout << "  Disorder Ratio        : " << (config.disorder_ratio * 100) << "%\n";
+        std::cout << "  Max Disorder Delay    : " << (config.max_disorder_us / 1000.0) << " ms\n";
+    }
     std::cout << "  Max Threads           : " << config.max_threads << "\n";
     std::cout << "  Max Memory            : " << config.max_memory_mb << " MB\n";
     std::cout << std::endl;
@@ -217,21 +323,40 @@ int main(int argc, char** argv) {
             } else {
                 std::cerr << "⚠ Unknown time unit: " << unit << " (use 'ms' or 'us')\n";
             }
+        } else if (arg == "--disorder" && i + 1 < argc) {
+            std::string val = argv[++i];
+            config.enable_disorder = (val == "true" || val == "1" || val == "yes");
+        } else if (arg == "--disorder-ratio" && i + 1 < argc) {
+            config.disorder_ratio = std::stod(argv[++i]);
+        } else if (arg == "--max-disorder-us" && i + 1 < argc) {
+            config.max_disorder_us = std::stoll(argv[++i]);
         } else if (arg == "--quiet") {
             config.verbose = false;
         } else if (arg == "--help") {
             std::cout << "Usage: " << argv[0] << " [options]\n"
                       << "Options:\n"
-                      << "  --s-file PATH     Path to stream S CSV file\n"
-                      << "  --r-file PATH     Path to stream R CSV file\n"
-                      << "  --max-s N         Max events from stream S (default: 60000)\n"
-                      << "  --max-r N         Max events from stream R (default: 60000)\n"
-                      << "  --window-us N     Window length in microseconds (default: 10000)\n"
-                      << "  --slide-us N      Slide length in microseconds (default: 5000)\n"
-                      << "  --threads N       Max threads (default: 4)\n"
-                      << "  --time-unit UNIT  CSV time unit: 'ms' or 'us' (default: ms)\n"
-                      << "  --quiet           Reduce output verbosity\n"
-                      << "  --help            Show this help\n";
+                      << "  Data Source:\n"
+                      << "    --s-file PATH         Path to stream S CSV file\n"
+                      << "    --r-file PATH         Path to stream R CSV file\n"
+                      << "    --max-s N             Max events from stream S (default: 200000)\n"
+                      << "    --max-r N             Max events from stream R (default: 200000)\n"
+                      << "    --time-unit UNIT      CSV time unit: 'ms' or 'us' (default: ms)\n"
+                      << "\n"
+                      << "  Window Parameters:\n"
+                      << "    --window-us N         Window length in microseconds (default: 10000)\n"
+                      << "    --slide-us N          Slide length in microseconds (default: 5000)\n"
+                      << "\n"
+                      << "  Disorder Simulation:\n"
+                      << "    --disorder BOOL       Enable disorder (true/false, default: true)\n"
+                      << "    --disorder-ratio R    Disorder ratio 0.0-1.0 (default: 0.3)\n"
+                      << "    --max-disorder-us N   Max disorder delay in us (default: 5000)\n"
+                      << "\n"
+                      << "  Resources:\n"
+                      << "    --threads N           Max threads (default: 8)\n"
+                      << "\n"
+                      << "  Display:\n"
+                      << "    --quiet               Reduce output verbosity\n"
+                      << "    --help                Show this help\n";
             return 0;
         }
     }
@@ -340,7 +465,7 @@ int main(int argc, char** argv) {
     // ========================================================================
     // Step 4: Insert Data into sageTSDB Tables (Sorted by Arrival Time)
     // ========================================================================
-    std::cout << "\n[Step 4] Inserting data into sageTSDB tables...\n";
+    std::cout << "\n[Step 4] Preparing data stream with disorder simulation...\n";
     
     // Merge and sort by arrival time for realistic stream processing
     std::vector<EventWithArrival> all_events;
@@ -350,6 +475,8 @@ int main(int argc, char** argv) {
         EventWithArrival evt;
         evt.data = CSVDataLoader::toTimeSeriesData(record, "S");
         evt.arrival_time = record.arrival_time;
+        evt.event_time = record.event_time;
+        evt.is_disordered = false;
         all_events.push_back(evt);
     }
     
@@ -357,13 +484,23 @@ int main(int argc, char** argv) {
         EventWithArrival evt;
         evt.data = CSVDataLoader::toTimeSeriesData(record, "R");
         evt.arrival_time = record.arrival_time;
+        evt.event_time = record.event_time;
+        evt.is_disordered = false;
         all_events.push_back(evt);
     }
     
     // Sort by arrival time (simulating real stream arrival order)
     std::sort(all_events.begin(), all_events.end());
     
-    std::cout << "  Inserting " << all_events.size() << " events in arrival order...\n";
+    // Apply disorder simulation
+    applyDisorder(all_events, config, stats);
+    stats.disorder_end_time = std::chrono::steady_clock::now();
+    
+    std::cout << "[Step 4.1] Inserting data into sageTSDB tables...\n";
+    std::cout << "  Total events to insert: " << all_events.size() << "\n";
+    std::cout << "  Progress updates every: " << config.progress_interval << " events\n\n";
+    
+    auto insert_start = std::chrono::steady_clock::now();
     
     // Insert in batches
     for (size_t i = 0; i < all_events.size(); i++) {
@@ -378,19 +515,33 @@ int main(int argc, char** argv) {
             stats.events_inserted_r++;
         }
         
-        // Progress indicator
+        // Progress indicator with throughput
         if (config.verbose && (i + 1) % config.progress_interval == 0) {
-            std::cout << "  Progress: " << (i + 1) << "/" << all_events.size() 
-                      << " events inserted\n";
+            auto current_time = std::chrono::steady_clock::now();
+            auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                current_time - insert_start).count();
+            double throughput = (elapsed_ms > 0) ? (i + 1) * 1000.0 / elapsed_ms : 0.0;
+            
+            std::cout << "  Progress: " << std::setw(6) << (i + 1) << "/" << all_events.size() 
+                      << " (" << std::fixed << std::setprecision(1) 
+                      << (100.0 * (i + 1) / all_events.size()) << "%) - "
+                      << std::setprecision(0) << throughput << " events/s\n";
         }
     }
     
     stats.insert_end_time = std::chrono::steady_clock::now();
     
+    auto insert_duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+        stats.insert_end_time - insert_start).count();
+    
     std::cout << "\n✓ Data insertion completed\n";
     std::cout << "  Stream S: " << stats.events_inserted_s << " events\n";
     std::cout << "  Stream R: " << stats.events_inserted_r << " events\n";
-    std::cout << "  Total:    " << (stats.events_inserted_s + stats.events_inserted_r) << " events\n\n";
+    std::cout << "  Total:    " << (stats.events_inserted_s + stats.events_inserted_r) << " events\n";
+    std::cout << "  Duration: " << insert_duration_ms << " ms\n";
+    std::cout << "  Throughput: " << std::fixed << std::setprecision(0)
+              << ((insert_duration_ms > 0) ? all_events.size() * 1000.0 / insert_duration_ms : 0.0)
+              << " events/s\n\n";
     
 #ifdef PECJ_MODE_INTEGRATED
     // ========================================================================
@@ -502,11 +653,13 @@ int main(int argc, char** argv) {
     std::cout << "\n[Integration Mode]\n";
 #ifdef PECJ_MODE_INTEGRATED
     std::cout << "  ✓ PECJ Deep Integration Mode (Database-Centric)\n";
+    std::cout << "  - High disorder & large scale testing\n";
     std::cout << "  - Real PECJ benchmark datasets (CSV)\n";
+    std::cout << "  - Out-of-order event simulation\n";
+    std::cout << "  - Late arrival handling with watermark\n";
     std::cout << "  - All data stored in sageTSDB tables\n";
     std::cout << "  - PECJ as stateless compute engine\n";
-    std::cout << "  - Multiple sliding windows triggered\n";
-    std::cout << "  - ResourceManager controls resources\n";
+    std::cout << "  - Multi-threaded sliding window processing\n";
 #else
     std::cout << "  ⚠ Stub Mode (PECJ not integrated)\n";
     std::cout << "  - Only data loading and insertion tested\n";
@@ -516,9 +669,10 @@ int main(int argc, char** argv) {
     
     std::cout << "[Next Steps]\n";
     std::cout << "  1. Check build/sage_tsdb_data/lsm/ for persisted data\n";
-    std::cout << "  2. Try different window parameters: --window-us, --slide-us\n";
-    std::cout << "  3. Use different datasets: --s-file, --r-file\n";
-    std::cout << "  4. Adjust event limits: --max-s, --max-r\n";
+    std::cout << "  2. Try higher disorder ratios: --disorder-ratio 0.5\n";
+    std::cout << "  3. Test with more data: --max-s 500000 --max-r 500000\n";
+    std::cout << "  4. Adjust window parameters: --window-us, --slide-us\n";
+    std::cout << "  5. Stress test with late arrivals: --max-disorder-us 10000\n";
     std::cout << "\n";
     
     return 0;
