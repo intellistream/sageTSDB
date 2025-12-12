@@ -2,378 +2,217 @@
 
 本目录包含 sageTSDB 的各种示例程序，展示核心功能和 PECJ 集成能力。
 
-## 📚 示例程序列表
-
-### 基础功能示例
-
-#### 1. persistence_example
-**功能**: 数据持久化演示
-- 时序数据保存和加载
-- 检查点（Checkpoint）管理
-- 增量写入和数据恢复
-
-**运行方式**:
-```bash
-cd build/examples
-./persistence_example
-```
-
-#### 2. plugin_usage_example
-**功能**: 插件系统使用演示
-- 插件加载和初始化
-- 数据流处理
-- 资源管理和监控
-
-**运行方式**:
-```bash
-cd build/examples
-./plugin_usage_example
-```
-
-#### 3. table_design_demo
-**功能**: 表设计和基本操作演示
-- 表的创建和管理
-- 数据插入和查询
-- 索引使用
-
-**运行方式**:
-```bash
-cd build/examples
-./table_design_demo
-```
-
-#### 4. window_scheduler_demo
-**功能**: 窗口调度器演示
-- 滑动窗口和滚动窗口
-- 窗口触发机制
-- 窗口聚合操作
-
-**运行方式**:
-```bash
-cd build/examples
-./window_scheduler_demo
-```
-
----
-
-### PECJ 集成示例
-
-#### 5. pecj_replay_demo
-**用途**: 展示基础的流式 Join 功能
-
-**特性**:
-- 从真实数据集加载 S 流和 R 流
-- 按到达时间顺序重放数据
-- 实时显示窗口触发和 Join 结果
-- 统计吞吐量、延迟等性能指标
-- 支持多种 PECJ 算子（IMA、MSWJ、SHJ 等）
-
-**运行方式**:
-```bash
-cd build/examples
-./pecj_replay_demo \
-    --s-file ../../../PECJ/benchmark/datasets/sTuple.csv \
-    --r-file ../../../PECJ/benchmark/datasets/rTuple.csv \
-    --max-tuples 10000 \
-    --operator IMA \
-    --window-ms 1000
-```
-
-**命令行参数**:
-- `--s-file`: S 流数据文件路径
-- `--r-file`: R 流数据文件路径
-- `--max-tuples`: 最大处理元组数
-- `--operator`: PECJ 算子类型（IMA/SHJ/MSWJ）
-- `--window-ms`: 窗口长度（毫秒）
-- `--threads`: 线程数
-
-#### 6. integrated_demo
-**用途**: 展示 PECJ + 故障检测的完整数据管道
-
-**特性**:
-- 同时运行 PECJ 和故障检测插件
-- 实时检测 Join 结果中的异常
-- 生成告警日志
-- 输出完整的性能报告（文本和文件）
-- 支持 Z-Score 和 VAE 检测方法
-
-**运行方式**:
-```bash
-cd build/examples
-./integrated_demo \
-    --s-file ../../../PECJ/benchmark/datasets/sTuple.csv \
-    --r-file ../../../PECJ/benchmark/datasets/rTuple.csv \
-    --max-tuples 10000 \
-    --detection zscore \
-    --threshold 3.0 \
-    --output integrated_results.txt
-```
-
-**命令行参数**:
-- `--detection`: 检测方法（zscore/vae）
-- `--threshold`: 异常检测阈值
-- `--output`: 输出报告文件路径
-
-#### 7. performance_benchmark
-**用途**: 系统性能评估和对比
-
-**特性**:
-- 测试多种 PECJ 算子（IMA、SHJ、MSWJ）
-- 评估不同数据规模的性能
-- 对比不同线程数的效果
-- 多次重复测试取平均值
-- 生成 CSV 格式的结果报告
-
-**运行方式**:
-```bash
-cd build/examples
-./performance_benchmark \
-    --s-file ../../../PECJ/benchmark/datasets/sTuple.csv \
-    --r-file ../../../PECJ/benchmark/datasets/rTuple.csv \
-    --output benchmark_results.csv
-```
-
-#### 8. deep_integration_demo
-**用途**: 展示 sageTSDB 与 PECJ 深度融合架构
-
-**架构特点**:
-- 所有数据存储在 sageTSDB 表中（无 PECJ 内部缓冲区）
-- PECJ 作为无状态纯计算引擎
-- ResourceManager 统一管理所有系统资源
-- 完整的数据摄入→存储→计算→查询流程
-
-**运行方式**:
-```bash
-cd build/examples
-./deep_integration_demo \
-    --events-s 10000 \
-    --events-r 10000 \
-    --keys 100 \
-    --ooo-ratio 0.2 \
-    --threads 4
-```
-
-**命令行参数**:
-- `--events-s`: Stream S 事件数量
-- `--events-r`: Stream R 事件数量
-- `--keys`: Key 取值范围
-- `--ooo-ratio`: 乱序比例（0.0-1.0）
-- `--threads`: 最大线程数
-
----
+> 📖 **详细文档**: 查看 [docs/examples/](../docs/examples/) 获取完整的使用指南和配置说明。
 
 ## 🚀 快速开始
 
-### 方式 1: 使用交互式脚本（推荐）
-```bash
-cd /path/to/sageTSDB
-./examples/run_demo.sh
-```
-
-### 方式 2: 直接运行
-```bash
-cd /path/to/sageTSDB/build
-
-# 基础演示
-./examples/pecj_replay_demo --max-tuples 5000
-
-# 完整演示
-./examples/integrated_demo --max-tuples 10000 --detection zscore
-
-# 性能测试
-./examples/performance_benchmark
-```
-
----
-
-## 📊 PECJ 数据集说明
-
-### 数据集格式
-所有 PECJ 数据集遵循以下 CSV 格式：
-```csv
-key,value,eventTime,arrivalTime
-51209364,1,0,455000
-86971226,1,0,455000
-...
-```
-
-**字段说明**:
-- `key`: Join 键（用于匹配 S 流和 R 流）
-- `value`: 元组值
-- `eventTime`: 事件时间戳（微秒）
-- `arrivalTime`: 到达时间戳（微秒，用于模拟乱序）
-
-### 可用数据集
-位于 `PECJ/benchmark/datasets/`:
-- **sTuple.csv / rTuple.csv**: 通用测试数据（~60K / ~77K 条）
-- **stock/**: 股票交易数据（多个延迟级别）
-- **retail/**: 零售交易数据
-- **rovio/**: Rovio 游戏数据
-- **logistics/**: 物流数据
-
-### 自定义数据集
-可以使用自己的数据集，只需确保：
-1. 遵循上述 CSV 格式
-2. 包含表头行
-3. 时间戳单位为微秒
-
----
-
-## 🎯 推荐演示流程
-
-### 场景 1: 向客户快速展示（5 分钟）
-**目标**: 展示系统能正常工作
+### 构建示例程序
 
 ```bash
-./examples/pecj_replay_demo --max-tuples 5000
-```
-
-**演示要点**:
-- 数据加载速度
-- 实时处理进度
-- 最终统计报告（吞吐量、延迟）
-
-### 场景 2: 完整功能演示（10 分钟）
-**目标**: 展示从数据输入到异常检测的端到端能力
-
-```bash
-./examples/integrated_demo --max-tuples 10000 --detection zscore --threshold 2.5
-```
-
-**演示要点**:
-- 双插件协同工作
-- 实时告警输出
-- 检测到的异常数量和比例
-- 报告文件生成
-
-### 场景 3: 性能对比（15 分钟）
-**目标**: 展示不同算子和配置的性能差异
-
-```bash
-./examples/performance_benchmark
-```
-
-**演示要点**:
-- IMA vs SHJ vs MSWJ 的性能对比
-- 多线程加速效果
-- 数据规模对性能的影响
-- CSV 报告可用于进一步分析
-
-### 场景 4: 深度架构展示（15 分钟）
-**目标**: 展示数据库中心化设计
-
-```bash
-./examples/deep_integration_demo --events-s 10000 --events-r 10000
-```
-
-**演示要点**:
-- 数据库中心化架构
-- 统一资源管理
-- 无状态计算引擎
-- 完整数据流管道
-
----
-
-## 🔧 构建示例
-
-### 前置条件
-- C++17 编译器（GCC 8+）
-- CMake 3.15+
-- PECJ 源码（用于 PECJ 集成示例）
-
-### 构建步骤
-
-```bash
-# 1. 进入 sageTSDB 目录
+# 进入项目根目录
 cd /path/to/sageTSDB
 
-# 2. 创建 build 目录
+# 创建并进入 build 目录
 mkdir -p build && cd build
 
-# 3. 配置 CMake
-# 基础配置（不含 PECJ）
-cmake ..
-
-# 或者启用 PECJ 集成
-cmake .. \
-    -DSAGE_TSDB_ENABLE_PECJ=ON \
-    -DPECJ_DIR=/path/to/PECJ
-
-# 或者启用 PECJ 深度集成模式
+# 配置 CMake (启用 PECJ 集成)
 cmake .. \
     -DSAGE_TSDB_ENABLE_PECJ=ON \
     -DPECJ_MODE=INTEGRATED \
     -DPECJ_DIR=/path/to/PECJ
 
-# 4. 编译
+# 编译所有示例
 make -j$(nproc)
 
-# 5. 所有示例程序位于
+# 示例程序位于
 ls build/examples/
+```
+
+### 运行第一个示例
+
+```bash
+cd build/examples
+
+# 基础功能演示
+./persistence_example
+
+# PECJ 流式 Join 演示
+./pecj_replay_demo \
+    --s-file ../../../PECJ/benchmark/datasets/sTuple.csv \
+    --r-file ../../../PECJ/benchmark/datasets/rTuple.csv \
+    --max-tuples 5000
 ```
 
 ---
 
-## 📖 示例程序对比
+## 📚 示例程序列表
 
-| Demo | 用途 | 时间 | 依赖 PECJ | 适合场景 |
-|------|------|------|-----------|---------|
-| persistence_example | 持久化功能 | ~2 分钟 | ❌ | 基础功能学习 |
-| plugin_usage_example | 插件系统 | ~2 分钟 | ❌ | 插件开发参考 |
-| table_design_demo | 表操作 | ~1 分钟 | ❌ | 数据库操作学习 |
-| window_scheduler_demo | 窗口调度 | ~2 分钟 | ❌ | 窗口机制学习 |
-| pecj_replay_demo | 流 Join 基础 | ~5 分钟 | ✅ | 快速演示 |
-| integrated_demo | PECJ + 故障检测 | ~10 分钟 | ✅ | 完整功能展示 |
-| performance_benchmark | 性能评估 | 15-30 分钟 | ✅ | 技术评估 |
-| deep_integration_demo | 深度架构 | ~15 分钟 | ✅ | 架构展示 |
+### 基础功能示例
 
----
+| 示例程序 | 功能说明 | 运行时间 | 文档 |
+|---------|---------|---------|------|
+| **persistence_example** | 数据持久化、检查点管理 | ~2 分钟 | [代码](./persistence_example.cpp) |
+| **plugin_usage_example** | 插件系统使用、资源管理 | ~2 分钟 | [代码](./plugin_usage_example.cpp) |
+| **table_design_demo** | 表设计、数据插入查询 | ~1 分钟 | [代码](./table_design_demo.cpp) |
+| **window_scheduler_demo** | 窗口调度、触发机制 | ~2 分钟 | [代码](./window_scheduler_demo.cpp) |
 
-## 🔍 疑难解答
+### PECJ 集成示例
 
-### 编译错误
-- 确保已安装所有依赖（见根目录 README.md）
-- 检查 CMake 配置是否正确
-- PECJ 集成示例需要正确设置 `PECJ_DIR`
-
-### 运行错误
-- 检查数据文件路径是否正确
-- 确保有足够的磁盘空间（持久化示例）
-- 查看日志输出获取详细错误信息
-
-### 数据集找不到
-- 确认 PECJ 数据集路径：`PECJ/benchmark/datasets/`
-- 使用 `--s-file` 和 `--r-file` 参数指定完整路径
+| 示例程序 | 功能说明 | 运行时间 | 文档 |
+|---------|---------|---------|------|
+| **pecj_replay_demo** | 基础流式 Join，数据重放 | ~5 分钟 | [代码](./pecj_replay_demo.cpp) |
+| **integrated_demo** | PECJ + 故障检测端到端演示 | ~10 分钟 | [代码](./integrated_demo.cpp) |
+| **performance_benchmark** | 多维度性能评估对比 | 15-30 分钟 | [代码](./performance_benchmark.cpp) |
+| **deep_integration_demo** | 深度集成架构、乱序处理 | ~15 分钟 | [代码](./deep_integration_demo.cpp) · [文档](../docs/examples/README_DEEP_INTEGRATION_DEMO.md) |
 
 ---
 
-## 📁 配置文件
+## 🎯 使用场景指南
 
-部分示例使用配置文件 `demo_configs.json` 进行参数设置。您可以修改此文件来调整：
-- 数据路径
-- 资源限制
-- 算法参数
-- 输出设置
+### 场景 1: 学习基础功能
+**适合**: 新用户、功能学习
+
+```bash
+# 1. 数据持久化
+./persistence_example
+
+# 2. 表操作
+./table_design_demo
+
+# 3. 窗口调度
+./window_scheduler_demo
+```
+
+### 场景 2: 快速演示（5分钟）
+**适合**: 快速展示系统能力
+
+```bash
+./pecj_replay_demo \
+    --s-file ../../../PECJ/benchmark/datasets/sTuple.csv \
+    --r-file ../../../PECJ/benchmark/datasets/rTuple.csv \
+    --max-tuples 5000 \
+    --operator IMA
+```
+
+### 场景 3: 完整功能演示（10分钟）
+**适合**: 展示端到端数据处理管道
+
+```bash
+./integrated_demo \
+    --s-file ../../../PECJ/benchmark/datasets/sTuple.csv \
+    --r-file ../../../PECJ/benchmark/datasets/rTuple.csv \
+    --max-tuples 10000 \
+    --detection zscore \
+    --threshold 3.0
+```
+
+### 场景 4: 性能评估（15分钟）
+**适合**: 技术评估、性能对比
+
+```bash
+# 运行预定义测试套件
+../scripts/run_high_disorder_demo.sh all
+
+# 或自定义参数
+./deep_integration_demo \
+    --s-file ../../../PECJ/benchmark/datasets/sTuple.csv \
+    --r-file ../../../PECJ/benchmark/datasets/rTuple.csv \
+    --max-s 200000 \
+    --max-r 200000 \
+    --disorder-ratio 0.3
+```
+
+参考: [高乱序演示文档](../docs/examples/README_HIGH_DISORDER_DEMO.md)
 
 ---
 
-## 🎓 学习路径
+## 📖 详细文档
 
-如果您是第一次使用 sageTSDB，建议按以下顺序学习示例：
+完整的使用指南、配置说明和最佳实践，请参阅:
 
-1. **persistence_example** - 了解基本的数据操作
-2. **table_design_demo** - 理解表结构和操作
-3. **window_scheduler_demo** - 学习窗口机制
-4. **plugin_usage_example** - 理解插件系统
-5. **pecj_replay_demo** - 学习流式 Join
-6. **integrated_demo** - 学习完整集成
-7. **deep_integration_demo** - 理解深度架构
-8. **performance_benchmark** - 优化性能配置
+- **[示例程序索引](../docs/examples/README.md)** - 所有示例的详细文档入口
+- **[Deep Integration Demo](../docs/examples/README_DEEP_INTEGRATION_DEMO.md)** - 深度集成架构详解
+- **[High Disorder Demo](../docs/examples/README_HIGH_DISORDER_DEMO.md)** - 高乱序场景测试指南
+
+其他相关文档:
+- [sageTSDB 设计文档](../docs/DESIGN_DOC_SAGETSDB_PECJ.md)
+- [PECJ 计算引擎实现](../docs/PECJ_COMPUTE_ENGINE_IMPLEMENTATION.md)
+- [资源管理器指南](../docs/RESOURCE_MANAGER_GUIDE.md)
 
 ---
 
-## 📝 更多信息
+## 🔧 常见问题
 
-- **完整文档**: 参见 `docs/` 目录
-- **单元测试**: 参见 `tests/` 目录作为 API 使用参考
-- **构建脚本**: 参见 `scripts/` 目录
+### Q: 编译时找不到 PECJ
+**A**: 确保正确设置 CMake 参数:
+```bash
+cmake .. -DSAGE_TSDB_ENABLE_PECJ=ON -DPECJ_DIR=/path/to/PECJ
+```
+
+### Q: 运行时提示找不到数据文件
+**A**: 使用绝对路径或从 `build/examples/` 目录运行:
+```bash
+cd build/examples
+./pecj_replay_demo --s-file <绝对路径>/sTuple.csv ...
+```
+
+### Q: 如何选择合适的 PECJ 算子？
+**A**: 
+- **IMA**: 增量维护聚合，适合大部分场景（推荐）
+- **SHJ**: 对称哈希 Join，适合均匀分布数据
+- **MSWJ**: 多路分段窗口 Join，适合高并发
+
+### Q: 如何调整性能？
+**A**: 主要参数:
+- `--threads`: 线程数（建议设为 CPU 核心数）
+- `--window-ms`: 窗口大小（根据数据特征调整）
+- `--max-tuples`: 处理数据量（影响总运行时间）
+
+---
+
+## 📊 数据集说明
+
+### 标准数据集位置
+```
+PECJ/benchmark/datasets/
+├── sTuple.csv          # S 流数据 (~60K 条)
+├── rTuple.csv          # R 流数据 (~77K 条)
+└── stock/              # 股票交易数据
+    └── ...
+```
+
+### CSV 格式
+```csv
+key,value,eventTime,arrivalTime
+51209364,1,0,455000
+86971226,1,0,455000
+```
+
+- **key**: Join 键
+- **value**: 元组值
+- **eventTime**: 事件时间（微秒）
+- **arrivalTime**: 到达时间（微秒）
+
+---
+
+## 🤝 贡献
+
+如果你创建了新的示例程序:
+
+1. 添加源文件到 `examples/` 目录
+2. 更新 `examples/CMakeLists.txt`
+3. 在本 README 中添加简要说明
+4. 如需详细文档，在 `docs/examples/` 中创建文档文件
+5. 提交 Pull Request
+
+---
+
+## 📞 获取帮助
+
+- 查看 [完整文档](../docs/examples/)
+- 查看源代码中的详细注释
+- 运行示例时使用 `--help` 参数查看所有选项
+
+---
+
+**下一步**: 选择一个示例程序开始探索，或查看 [示例文档索引](../docs/examples/README.md) 了解更多！

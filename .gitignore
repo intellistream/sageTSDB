@@ -34,7 +34,7 @@ Thumbs.db
 *.dylib
 *.exe
 CMakeFiles/
-
+sage_tsdb_data
 #scripts
 push_feature.sh
 install/bin/examples/persistence_example
