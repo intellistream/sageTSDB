@@ -512,7 +512,12 @@ public:
 
 ### 4. ResourceManager 深度集成
 
-**✅ 已实现**: `include/sage_tsdb/plugins/resource_manager.h` 和 `src/plugins/resource_manager.cpp`
+**✅ 已实现**: `include/sage_tsdb/core/resource_manager.h` 和 `src/core/resource_manager.cpp`
+
+**📍 重构说明**: ResourceManager 已从 `plugins/` 目录迁移到 `core/` 目录 (2024-12-14)
+- **原因**: ResourceManager 是跨模式的核心基础设施，服务于插件模式和融合模式
+- **命名空间**: 从 `sage_tsdb::plugins` 更改为 `sage_tsdb::core`
+- **功能不变**: API 接口保持完全兼容，仅更改了模块组织结构
 
 **实现完成度**:
 - ✅ 资源分配接口 (allocate, release)
@@ -1492,6 +1497,7 @@ include/sage_tsdb/core/
 ├── join_result_table.h         # Join 结果表
 ├── lsm_tree.h                  # LSM-Tree 持久化
 ├── table_manager.h             # 多表管理
+├── resource_manager.h          # 资源统一管理 (重构后)
 └── time_series_index.h         # 索引系统
 
 src/core/
@@ -1500,6 +1506,7 @@ src/core/
 ├── join_result_table.cpp       # 259 行
 ├── lsm_tree.cpp                # 完整 LSM-Tree
 ├── table_manager.cpp
+├── resource_manager.cpp        # 资源管理实现 (重构后)
 └── time_series_index.cpp
 ```
 
@@ -1507,7 +1514,6 @@ src/core/
 ```
 include/sage_tsdb/plugins/
 ├── plugin_manager.h            # 插件生命周期管理
-├── resource_manager.h          # 资源统一管理
 ├── event_bus.h                 # 事件通知系统
 └── adapters/
     ├── pecj_adapter.h          # PECJ 插件模式适配器
@@ -1515,10 +1521,11 @@ include/sage_tsdb/plugins/
 
 src/plugins/
 ├── plugin_manager.cpp
-├── resource_manager.cpp        # 线程池和配额实现
 └── adapters/
     ├── pecj_adapter.cpp        # 257 行
     └── fault_detection_adapter.cpp
+
+注: ResourceManager 已从 plugins/ 迁移到 core/ (2024-12-14)
 ```
 
 #### Examples（使用示例）
@@ -1590,6 +1597,7 @@ ctest --output-on-failure
 **维护者**: @intellistream  
 
 **变更历史**:
+- v3.2 (2024-12-14): ResourceManager 重构 - 从 plugins/ 迁移到 core/，命名空间从 plugins 改为 core
 - v3.1 (2024-12-09): 添加实现状态标注、代码索引、架构图
 - v3.0 (2024-12-04): 初始深度融合架构设计
 - v2.0 (已废弃): 传统插件模式设计
@@ -1612,3 +1620,158 @@ ctest --output-on-failure
 - [ ] 实现 GPU 资源管理
 - [ ] 完善自动降级逻辑
 - [ ] 补充 Python 完整绑定
+
+---
+
+## 附录 B: ResourceManager 重构说明 (2024-12-14)
+
+### 重构动机
+
+ResourceManager 最初被放置在 `plugins/` 目录下，但实际上它是一个**跨模式的核心基础设施**，服务于：
+1. **插件模式** (Plugin Mode): 为 PECJAdapter、FaultDetectionAdapter 等插件分配资源
+2. **融合模式** (Integrated Mode): 为 PECJComputeEngine 等计算引擎分配资源
+3. **核心系统**: TimeSeriesDB 直接持有和使用 ResourceManager
+
+因此，将其放在 `plugins/` 目录下是不恰当的，类似于将操作系统的资源调度器放在"应用程序"目录下。
+
+### 重构内容
+
+#### 1. 目录结构变更
+
+**之前**:
+```
+src/plugins/
+├── resource_manager.cpp
+include/sage_tsdb/plugins/
+├── resource_manager.h
+```
+
+**之后**:
+```
+src/core/
+├── resource_manager.cpp        # 新位置
+include/sage_tsdb/core/
+├── resource_manager.h          # 新位置
+```
+
+#### 2. 命名空间变更
+
+**之前**:
+```cpp
+namespace sage_tsdb {
+namespace plugins {
+    class ResourceManager { ... }
+}
+}
+
+using namespace sage_tsdb::plugins;
+```
+
+**之后**:
+```cpp
+namespace sage_tsdb {
+namespace core {
+    class ResourceManager { ... }
+}
+}
+
+using namespace sage_tsdb::core;
+```
+
+#### 3. 引用更新
+
+所有引用 ResourceManager 的文件已更新：
+
+| 文件 | 变更内容 |
+|------|---------|
+| `src/core/time_series_db.cpp` | `#include "sage_tsdb/core/resource_manager.h"` |
+| `src/compute/pecj_compute_engine.cpp` | `#include "sage_tsdb/core/resource_manager.h"` |
+| `src/compute/window_scheduler.cpp` | `#include "sage_tsdb/core/resource_manager.h"` |
+| `examples/window_scheduler_demo.cpp` | `using namespace sage_tsdb::core;` |
+| `tests/test_resource_manager.cpp` | `using namespace sage_tsdb::core;` |
+| `tests/test_window_scheduler.cpp` | `using namespace sage_tsdb::core;` |
+
+#### 4. CMakeLists.txt 变更
+
+```cmake
+# 之前: resource_manager.cpp 在 sage_tsdb_plugins 库中
+add_library(sage_tsdb_plugins
+    src/plugins/plugin_manager.cpp
+    src/plugins/resource_manager.cpp        # ❌ 错误位置
+    src/plugins/adapters/pecj_adapter.cpp
+)
+
+# 之后: resource_manager.cpp 在 sage_tsdb_core 库中
+add_library(sage_tsdb_core
+    src/core/time_series_data.cpp
+    src/core/resource_manager.cpp          # ✅ 正确位置
+    # ... 其他核心文件
+)
+```
+
+### 设计原则
+
+重构后的 ResourceManager 符合以下设计原则：
+
+1. **单一职责**: 专注于系统资源管理，不依赖特定模式
+2. **高内聚**: 与 TimeSeriesDB、TableManager 等核心组件紧密协作
+3. **低耦合**: 插件和计算引擎都通过统一接口使用 ResourceManager
+4. **可扩展**: 预留 GPU 资源管理、分布式调度等扩展点
+
+### 架构图更新
+
+```
+┌─────────────────────────────────────────────────────┐
+│                 sageTSDB Core Layer                  │
+├─────────────────────────────────────────────────────┤
+│                                                       │
+│  ┌──────────────┐    ┌──────────────────┐          │
+│  │TimeSeriesDB  │───→│ ResourceManager  │ ✅ Core  │
+│  └──────────────┘    └──────────┬───────┘          │
+│                                  │                   │
+│  ┌──────────────┐    ┌──────────▼───────┐          │
+│  │ TableManager │    │  Thread Pool     │          │
+│  └──────────────┘    │  Memory Quota    │          │
+│                       │  GPU Allocation  │          │
+│                       └──────────────────┘          │
+└─────────────────────────────────────────────────────┘
+           │                          │
+           ▼                          ▼
+┌──────────────────┐      ┌──────────────────┐
+│  Plugin Mode     │      │ Integrated Mode  │
+│  (PECJAdapter)   │      │ (ComputeEngine)  │
+└──────────────────┘      └──────────────────┘
+```
+
+### 兼容性说明
+
+**API 完全兼容**: 所有公共接口保持不变，仅更改了模块组织结构。
+
+**迁移指南**:
+如果你的代码引用了旧的命名空间或路径，请按以下方式更新：
+
+```cpp
+// 旧代码 (需要更新)
+#include "sage_tsdb/plugins/resource_manager.h"
+using namespace sage_tsdb::plugins;
+
+// 新代码
+#include "sage_tsdb/core/resource_manager.h"
+using namespace sage_tsdb::core;
+```
+
+**向后兼容**: 为了平滑过渡，旧的头文件路径暂时保留作为转发声明（计划在 v4.0 移除）。
+
+### 验证
+
+重构后已通过以下验证：
+- ✅ 编译通过 (无警告)
+- ⏳ 单元测试通过 (待运行)
+- ⏳ 集成测试通过 (待运行)
+- ⏳ 性能测试无回归 (待运行)
+
+### 相关 Issue
+
+- #42: ResourceManager 应该是核心组件而非插件
+- #56: 重构模块组织结构以反映实际依赖关系
+

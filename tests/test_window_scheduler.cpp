@@ -10,14 +10,13 @@
 #include "sage_tsdb/compute/window_scheduler.h"
 #include "sage_tsdb/compute/pecj_compute_engine.h"
 #include "sage_tsdb/core/table_manager.h"
-#include "sage_tsdb/plugins/resource_manager.h"
+#include "sage_tsdb/core/resource_manager.h"
 #include <thread>
 #include <chrono>
 
 using namespace sage_tsdb;
 using namespace sage_tsdb::compute;
 using namespace sage_tsdb::core;
-using namespace sage_tsdb::plugins;
 
 class WindowSchedulerTest : public ::testing::Test {
 protected:

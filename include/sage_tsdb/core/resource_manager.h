@@ -8,7 +8,7 @@
 #include <atomic>
 
 namespace sage_tsdb {
-namespace plugins {
+namespace core {
 
 /**
  * @brief Resource request descriptor
@@ -240,5 +240,5 @@ public:
  */
 std::shared_ptr<ResourceManager> createResourceManager();
 
-}  // namespace plugins
+}  // namespace core
 }  // namespace sage_tsdb

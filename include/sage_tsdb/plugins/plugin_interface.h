@@ -1,7 +1,7 @@
 #pragma once
 
 #include "../core/time_series_data.h"
-#include "resource_manager.h"
+#include "../core/resource_manager.h"
 #include <functional>
 #include <map>
 #include <memory>
@@ -61,8 +61,8 @@ public:
      * Plugins supporting ResourceManager should override this method.
      */
     virtual bool initialize(const PluginConfig& config, 
-                          const ResourceRequest& request,
-                          ResourceHandle* handle) {
+                          const core::ResourceRequest& request,
+                          core::ResourceHandle* handle) {
         // Default: not supported, fallback to legacy
         return false;
     }

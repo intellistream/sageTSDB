@@ -2,7 +2,7 @@
 
 #include "../plugin_interface.h"
 #include "../event_bus.h"
-#include "../resource_manager.h"
+#include "../../core/resource_manager.h"
 #include <atomic>
 #include <condition_variable>
 #include <memory>
@@ -107,8 +107,8 @@ public:
      * creating independent threads. In Stub mode, resource_handle may be nullptr.
      */
     bool initialize(const PluginConfig& config, 
-                   const ResourceRequest& resource_request,
-                   ResourceHandle* resource_handle) override;
+                   const core::ResourceRequest& resource_request,
+                   core::ResourceHandle* resource_handle) override;
     
     void feedData(const TimeSeriesData& data) override;
     AlgorithmResult process() override;
@@ -166,7 +166,7 @@ public:
     /**
      * @brief Get current resource usage (for monitoring)
      */
-    ResourceUsage getResourceUsage() const;
+    core::ResourceUsage getResourceUsage() const;
 
 private:
     /**
@@ -239,8 +239,8 @@ private:
     std::mutex state_mutex_;
     
     // Resource management (Integrated mode)
-    ResourceRequest resource_request_;
-    ResourceHandle* resource_handle_{nullptr};  // Non-owning pointer managed by PluginManager
+    core::ResourceRequest resource_request_;
+    core::ResourceHandle* resource_handle_{nullptr};  // Non-owning pointer managed by PluginManager
     std::atomic<uint64_t> queue_length_{0};
     
     // Mode detection
