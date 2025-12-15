@@ -88,6 +88,32 @@ target_link_libraries(test_storage_engine
     test_utils
 )
 
+# Table design tests
+add_executable(test_table_design
+  test_table_design.cpp
+)
+target_link_libraries(test_table_design
+  PRIVATE
+    sage_tsdb_core
+    GTest::gtest_main
+    test_utils
+)
+
+# WindowScheduler tests (only if compute library is built)
+if(TARGET sage_tsdb_compute)
+    add_executable(test_window_scheduler
+      test_window_scheduler_simple.cpp
+    )
+    target_link_libraries(test_window_scheduler
+      PRIVATE
+        sage_tsdb_compute
+        sage_tsdb_core
+        GTest::gtest_main
+        test_utils
+    )
+    message(STATUS "Building WindowScheduler tests (simple version)")
+endif()
+
 # Plugin tests (only if plugins are built)
 if(TARGET sage_tsdb_plugins)
     add_executable(test_pecj_plugin
@@ -112,6 +138,27 @@ if(TARGET sage_tsdb_plugins)
         test_utils
     )
     
+    add_executable(test_resource_manager
+      test_resource_manager.cpp
+    )
+    target_link_libraries(test_resource_manager
+      PRIVATE
+        sage_tsdb_plugins
+        sage_tsdb_core
+        GTest::gtest_main
+        test_utils
+    )
+    
+    # Integrated mode test (uses ResourceManager with PECJ)
+    add_executable(test_integrated_mode
+      test_integrated_mode.cpp
+    )
+    target_link_libraries(test_integrated_mode
+      PRIVATE
+        sage_tsdb_plugins
+        sage_tsdb_core
+    )
+    
     message(STATUS "Building plugin tests")
 endif()
 
@@ -123,6 +170,11 @@ gtest_discover_tests(test_time_series_db)
 gtest_discover_tests(test_stream_join)
 gtest_discover_tests(test_window_aggregator)
 gtest_discover_tests(test_storage_engine)
+gtest_discover_tests(test_table_design)
+
+if(TARGET test_window_scheduler)
+    gtest_discover_tests(test_window_scheduler)
+endif()
 
 if(TARGET test_pecj_plugin)
     gtest_discover_tests(test_pecj_plugin)
@@ -131,3 +183,10 @@ endif()
 if(TARGET test_fault_detection_plugin)
     gtest_discover_tests(test_fault_detection_plugin)
 endif()
+
+if(TARGET test_resource_manager)
+    gtest_discover_tests(test_resource_manager)
+endif()
+
+# Note: test_integrated_mode is not registered with CTest as it's a manual verification tool
+
