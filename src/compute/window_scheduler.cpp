@@ -12,7 +12,7 @@
 
 #include "sage_tsdb/core/table_manager.h"
 #include "sage_tsdb/core/stream_table.h"
-#include "sage_tsdb/plugins/resource_manager.h"
+#include "sage_tsdb/core/resource_manager.h"
 #include <algorithm>
 #include <chrono>
 #include <iostream>

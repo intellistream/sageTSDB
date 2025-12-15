@@ -1,4 +1,4 @@
-#include "sage_tsdb/plugins/resource_manager.h"
+#include "sage_tsdb/core/resource_manager.h"
 #include <mutex>
 #include <unordered_map>
 #include <queue>
@@ -6,7 +6,7 @@
 #include <condition_variable>
 
 namespace sage_tsdb {
-namespace plugins {
+namespace core {
 
 /**
  * @brief Internal resource handle implementation
@@ -406,5 +406,5 @@ std::shared_ptr<ResourceManager> createResourceManager() {
     return std::make_shared<ResourceManagerImpl>();
 }
 
-}  // namespace plugins
+}  // namespace core
 }  // namespace sage_tsdb

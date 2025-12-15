@@ -3,7 +3,7 @@
 #include "plugin_interface.h"
 #include "plugin_registry.h"
 #include "event_bus.h"
-#include "resource_manager.h"
+#include "../core/resource_manager.h"
 #include <memory>
 #include <mutex>
 #include <unordered_map>
@@ -114,7 +114,7 @@ public:
     /**
      * @brief Get ResourceManager instance (for testing/monitoring)
      */
-    ResourceManager* getResourceManager() { return resource_manager_.get(); }
+    core::ResourceManager* getResourceManager() { return resource_manager_.get(); }
 
 private:
     /**
@@ -133,8 +133,8 @@ private:
     mutable std::mutex plugins_mutex_;
     
     // Resource management per plugin
-    std::unordered_map<std::string, std::shared_ptr<ResourceHandle>> plugin_resources_;
-    std::shared_ptr<ResourceManager> resource_manager_;
+    std::unordered_map<std::string, std::shared_ptr<core::ResourceHandle>> plugin_resources_;
+    std::shared_ptr<core::ResourceManager> resource_manager_;
     
     // Event bus for communication
     EventBus event_bus_;

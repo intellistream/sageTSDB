@@ -20,12 +20,12 @@
 #include "sage_tsdb/compute/window_scheduler.h"
 #include "sage_tsdb/compute/pecj_compute_engine.h"
 #include "sage_tsdb/core/table_manager.h"
-#include "sage_tsdb/plugins/resource_manager.h"
+#include "sage_tsdb/core/resource_manager.h"
 #include "sage_tsdb/core/time_series_data.h"
 
 using namespace sage_tsdb;
 using namespace sage_tsdb::compute;
-using namespace sage_tsdb::plugins;
+using namespace sage_tsdb::core;
 
 // Helper function to generate random stock data
 TimeSeriesData generateStockData(const std::string& symbol, int64_t timestamp) {

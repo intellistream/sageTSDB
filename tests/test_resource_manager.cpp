@@ -14,13 +14,13 @@
  * 依赖：ResourceManager 类及相关接口
  */
 
-#include "sage_tsdb/plugins/resource_manager.h"
+#include "sage_tsdb/core/resource_manager.h"
 #include <gtest/gtest.h>
 #include <chrono>
 #include <thread>
 #include <atomic>
 
-using namespace sage_tsdb::plugins;
+using namespace sage_tsdb::core;
 
 /**
  * @class ResourceManagerTest

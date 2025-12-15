@@ -2,16 +2,18 @@
 
 ## 概述
 
-ResourceManager 是 sageTSDB 的核心资源调度器，负责统一管理所有插件的线程、内存和 GPU 资源。
+ResourceManager 是 sageTSDB 的核心资源调度器，负责统一管理所有插件和计算引擎的线程、内存和 GPU 资源。
+
+**注意**: ResourceManager 已从 `plugins/` 迁移到 `core/` 目录 (v3.2, 2024-12-14)。
 
 ## 快速开始
 
 ### 1. 创建 ResourceManager 实例
 
 ```cpp
-#include "sage_tsdb/plugins/resource_manager.h"
+#include "sage_tsdb/core/resource_manager.h"
 
-using namespace sage_tsdb::plugins;
+using namespace sage_tsdb::core;
 
 // 创建实例
 auto rm = createResourceManager();
@@ -277,5 +279,5 @@ std::cout << "Allocated threads: "
 ## 参考
 
 - [设计文档](../docs/DESIGN_DOC_SAGETSDB_PECJ.md)
-- [单元测试](../test/plugins/test_resource_manager.cpp)
-- [API 文档](../include/sage_tsdb/plugins/resource_manager.h)
+- [单元测试](../tests/test_resource_manager.cpp)
+- [API 文档](../include/sage_tsdb/core/resource_manager.h)

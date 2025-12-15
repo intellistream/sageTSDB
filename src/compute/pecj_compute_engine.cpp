@@ -20,7 +20,7 @@
 // sageTSDB core headers - include BEFORE everything else
 #include "sage_tsdb/core/time_series_db.h"
 #include "sage_tsdb/core/time_series_data.h"
-#include "sage_tsdb/plugins/resource_manager.h"
+#include "sage_tsdb/core/resource_manager.h"
 
 // Now include the header - after core dependencies are resolved
 #include "sage_tsdb/compute/pecj_compute_engine.h"

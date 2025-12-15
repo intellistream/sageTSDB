@@ -36,8 +36,8 @@ bool PluginManager::initialize() {
         return true;
     }
     
-    // Create ResourceManager
-    resource_manager_ = createResourceManager();
+    // Create ResourceManager (now in core namespace)
+    resource_manager_ = core::createResourceManager();
     if (!resource_manager_) {
         std::cerr << "Failed to create ResourceManager" << std::endl;
         return false;
@@ -79,8 +79,8 @@ bool PluginManager::loadPlugin(const std::string& name, const PluginConfig& conf
     }
     
     // Attempt resource allocation if ResourceManager is available
-    std::shared_ptr<ResourceHandle> resource_handle;
-    ResourceRequest request;  // Reuse for both allocation and initialization
+    std::shared_ptr<core::ResourceHandle> resource_handle;
+    core::ResourceRequest request;  // Reuse for both allocation and initialization
     
     if (resource_manager_) {
         // Extract resource request from plugin config (with defaults)

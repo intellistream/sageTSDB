@@ -151,7 +151,8 @@ struct DemoStats {
         std::cout << "  Windows Triggered     : " << windows_triggered << "\n";
         std::cout << "  Join Results          : " << join_results << "\n";
         std::cout << "  Avg Results/Window    : " 
-                  << (windows_triggered > 0 ? join_results / windows_triggered : 0) << "\n";
+                  << std::fixed << std::setprecision(2)
+                  << (windows_triggered > 0 ? static_cast<double>(join_results) / windows_triggered : 0.0) << "\n";
         std::cout << "  Computation Time      : " << compute_duration_ms << " ms\n";
         std::cout << "  Avg per Window (us)   : " 
                   << (windows_triggered > 0 ? total_computation_time_us / windows_triggered : 0) << "\n";
@@ -608,7 +609,8 @@ int main(int argc, char** argv) {
     std::cout << "  Total Windows Processed : " << stats.windows_triggered << "\n";
     std::cout << "  Total Join Results      : " << stats.join_results << "\n";
     std::cout << "  Avg Results per Window  : " 
-              << (stats.windows_triggered > 0 ? stats.join_results / stats.windows_triggered : 0) << "\n\n";
+              << std::fixed << std::setprecision(2)
+              << (stats.windows_triggered > 0 ? static_cast<double>(stats.join_results) / stats.windows_triggered : 0.0) << "\n\n";
 #endif
     
     // ========================================================================

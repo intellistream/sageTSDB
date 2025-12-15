@@ -1,7 +1,7 @@
 #include "sage_tsdb/core/time_series_db.h"
 #include "sage_tsdb/core/storage_engine.h"
 #include "sage_tsdb/algorithms/algorithm_base.h"
-#include "sage_tsdb/plugins/resource_manager.h"
+#include "sage_tsdb/core/resource_manager.h"
 #include <stdexcept>
 
 namespace sage_tsdb {

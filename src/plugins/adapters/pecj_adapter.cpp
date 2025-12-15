@@ -80,12 +80,12 @@ void PECJAdapter::parseConfig(const PluginConfig& config) {
 bool PECJAdapter::initialize(const PluginConfig& config) {
     // Legacy initialize - defaults to Baseline mode (independent threads)
     run_mode_ = RunMode::Baseline;
-    return initialize(config, ResourceRequest{}, nullptr);
+    return initialize(config, core::ResourceRequest{}, nullptr);
 }
 
 bool PECJAdapter::initialize(const PluginConfig& config,
-                             const ResourceRequest& resource_request,
-                             ResourceHandle* resource_handle) {
+                             const core::ResourceRequest& resource_request,
+                             core::ResourceHandle* resource_handle) {
     std::lock_guard<std::mutex> lock(state_mutex_);
     
     if (initialized_.load()) {
@@ -549,8 +549,8 @@ std::map<std::string, int64_t> PECJAdapter::getTimeBreakdown() const {
 // Resource Usage Reporting
 // ============================================================================
 
-ResourceUsage PECJAdapter::getResourceUsage() const {
-    ResourceUsage usage;
+core::ResourceUsage PECJAdapter::getResourceUsage() const {
+    core::ResourceUsage usage;
     
     // Thread usage
     usage.threads_used = (run_mode_ == RunMode::Integrated) ? 
