@@ -399,7 +399,7 @@ int main(int argc, char** argv) {
     compute::ComputeConfig pecj_config;
     pecj_config.window_len_us = config.window_len_us;
     pecj_config.slide_len_us = config.slide_len_us;
-    pecj_config.operator_type = "SHJ";  // Try SHJ (Symmetric Hash Join) instead
+    pecj_config.operator_type = "IAWJ";  // Try SHJ (Symmetric Hash Join) instead
     pecj_config.max_threads = config.max_threads;
     pecj_config.max_memory_bytes = config.max_memory_mb * 1024ULL * 1024ULL;
     pecj_config.stream_s_table = "stream_s";
