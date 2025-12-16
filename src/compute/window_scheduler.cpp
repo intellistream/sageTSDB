@@ -33,7 +33,7 @@ static int64_t getCurrentTimeUs() {
 WindowScheduler::WindowScheduler(const WindowSchedulerConfig& config,
                                  PECJComputeEngine* compute_engine,
                                  core::TableManager* table_manager,
-                                 plugins::ResourceHandle* resource_handle)
+                                 core::ResourceHandle* resource_handle)
     : config_(config),
       compute_engine_(compute_engine),
       table_manager_(table_manager),
@@ -330,7 +330,7 @@ bool WindowScheduler::shouldTriggerWindow(const WindowInfo& window) {
     switch (config_.trigger_policy) {
         case TriggerPolicy::TimeBased:
             // Trigger when watermark passes window end + slack
-            return current_watermark >= (window.time_range.end_us + config_.watermark_slack_us);
+            return current_watermark >= static_cast<int64_t>(window.time_range.end_us + config_.watermark_slack_us);
         
         case TriggerPolicy::CountBased:
             // Trigger when enough tuples collected
@@ -338,8 +338,12 @@ bool WindowScheduler::shouldTriggerWindow(const WindowInfo& window) {
         
         case TriggerPolicy::Hybrid:
             // Trigger when either condition is met
-            return current_watermark >= (window.time_range.end_us + config_.watermark_slack_us) ||
+            return current_watermark >= static_cast<int64_t>(window.time_range.end_us + config_.watermark_slack_us) ||
                    (window.stream_s_count + window.stream_r_count) >= config_.trigger_count_threshold;
+        
+        case TriggerPolicy::Watermark:
+            // Trigger based on watermark only
+            return current_watermark >= static_cast<int64_t>(window.time_range.end_us + config_.watermark_slack_us);
         
         case TriggerPolicy::Manual:
             // Only trigger manually
@@ -359,24 +363,40 @@ WindowInfo WindowScheduler::createWindow(int64_t timestamp) {
     switch (config_.window_type) {
         case WindowType::Tumbling: {
             // Align to window boundaries
-            int64_t window_start = (timestamp / config_.window_len_us) * config_.window_len_us;
+            int64_t window_start = (timestamp / static_cast<int64_t>(config_.window_len_us)) * static_cast<int64_t>(config_.window_len_us);
             window.time_range.start_us = window_start;
-            window.time_range.end_us = window_start + config_.window_len_us;
+            window.time_range.end_us = window_start + static_cast<int64_t>(config_.window_len_us);
             break;
         }
         
         case WindowType::Sliding: {
             // Create overlapping windows
-            int64_t window_start = (timestamp / config_.slide_len_us) * config_.slide_len_us;
+            int64_t window_start = (timestamp / static_cast<int64_t>(config_.slide_len_us)) * static_cast<int64_t>(config_.slide_len_us);
             window.time_range.start_us = window_start;
-            window.time_range.end_us = window_start + config_.window_len_us;
+            window.time_range.end_us = window_start + static_cast<int64_t>(config_.window_len_us);
             break;
         }
         
         case WindowType::Session: {
             // Session windows (gap-based) - simplified implementation
             window.time_range.start_us = timestamp;
-            window.time_range.end_us = timestamp + config_.window_len_us;
+            window.time_range.end_us = timestamp + static_cast<int64_t>(config_.window_len_us);
+            break;
+        }
+        
+        case WindowType::IntraWindow: {
+            // Intra-window join (IAWJ) - single window only, same as tumbling
+            int64_t window_start = (timestamp / static_cast<int64_t>(config_.window_len_us)) * static_cast<int64_t>(config_.window_len_us);
+            window.time_range.start_us = window_start;
+            window.time_range.end_us = window_start + static_cast<int64_t>(config_.window_len_us);
+            break;
+        }
+        
+        case WindowType::MultiStream: {
+            // Multi-stream window join (MSWJ) - similar to sliding with synchronization
+            int64_t window_start = (timestamp / static_cast<int64_t>(config_.slide_len_us)) * static_cast<int64_t>(config_.slide_len_us);
+            window.time_range.start_us = window_start;
+            window.time_range.end_us = window_start + static_cast<int64_t>(config_.window_len_us);
             break;
         }
     }
@@ -539,7 +559,7 @@ void WindowScheduler::updateMetrics() {
     std::lock_guard<std::mutex> lock(metrics_mutex_);
     
     // Update only if enough time has passed
-    if (current_time - metrics_last_update_us_ < config_.metrics_report_interval_us) {
+    if (current_time - metrics_last_update_us_ < static_cast<int64_t>(config_.metrics_report_interval_us)) {
         return;
     }
     

@@ -34,6 +34,14 @@ using namespace std;
 #include "Operator/IAWJOperator.h"
 #include "Operator/MSWJOperator.h"
 #include "Operator/RawSHJOperator.h"
+#include "Operator/RawPRJOperator.h"
+#include "Operator/MeanAQPIAWJOperator.h"
+#include "Operator/IMAIAWJOperator.h"
+#include "Operator/IAWJSelOperator.h"
+#include "Operator/LazyIAWJSelOperator.h"
+#include "Operator/AIOperator.h"
+#include "Operator/LinearSVIOperator.h"
+#include "Operator/PECJOperator.h"
 #include "Common/Tuples.h"
 #include <sys/time.h>
 #endif
@@ -90,7 +98,7 @@ PECJComputeEngine::~PECJComputeEngine() {
 
 bool PECJComputeEngine::initialize(const ComputeConfig& config,
                                    TimeSeriesDB* db,
-                                   plugins::ResourceHandle* resource_handle) {
+                                   core::ResourceHandle* resource_handle) {
     if (initialized_.load()) {
         return false; // Already initialized
     }
@@ -133,21 +141,67 @@ bool PECJComputeEngine::createPECJOperator() {
         // Set window parameters (in microseconds)
         pecj_config->edit("windowLen", config_.window_len_us);
         pecj_config->edit("slideLen", config_.slide_len_us);
-        pecj_config->edit("sLen", static_cast<uint64_t>(100000)); // S buffer size
-        pecj_config->edit("rLen", static_cast<uint64_t>(100000)); // R buffer size
-        pecj_config->edit("timeStep", static_cast<uint64_t>(1000)); // Time step in us
+        pecj_config->edit("sLen", config_.s_buffer_len);
+        pecj_config->edit("rLen", config_.r_buffer_len);
+        pecj_config->edit("timeStep", config_.time_step_us);
         pecj_config->edit("joinSum", static_cast<uint64_t>(1)); // Enable join result counting
         
-        // Create operator based on type
-        if (config_.operator_type == "IAWJ" || config_.operator_type == "IMA") {
-            pecj_operator_ = std::make_shared<OoOJoin::IAWJOperator>();
-        } else if (config_.operator_type == "MWAY") {
-            pecj_operator_ = std::make_shared<OoOJoin::MSWJOperator>();
-        } else if (config_.operator_type == "SHJ") {
-            pecj_operator_ = std::make_shared<OoOJoin::RawSHJOperator>();
-        } else {
-            // Default to IAWJ
-            pecj_operator_ = std::make_shared<OoOJoin::IAWJOperator>();
+        // Set watermark parameters
+        pecj_config->edit("wmTag", config_.watermark_tag);
+        pecj_config->edit("watermarkTimeMs", config_.watermark_time_ms);
+        pecj_config->edit("latenessMs", config_.lateness_ms);
+        
+        // Set operator-specific parameters
+        if (config_.ima_disable_compensation) {
+            pecj_config->edit("imaDisableCompensation", static_cast<uint64_t>(1));
+        }
+        if (config_.mswj_compensation) {
+            pecj_config->edit("mswjCompensation", static_cast<uint64_t>(1));
+        }
+        
+        // Sync operator_enum with operator_type string if needed
+        PECJOperatorType op_type = stringToOperatorType(config_.operator_type);
+        
+        // Create operator based on type - support all PECJ operators
+        switch (op_type) {
+            case PECJOperatorType::IAWJ:
+                pecj_operator_ = std::make_shared<OoOJoin::IAWJOperator>();
+                break;
+            case PECJOperatorType::MeanAQP:
+                pecj_operator_ = std::make_shared<OoOJoin::MeanAQPIAWJOperator>();
+                break;
+            case PECJOperatorType::IMA:
+                pecj_operator_ = std::make_shared<OoOJoin::IMAIAWJOperator>();
+                break;
+            case PECJOperatorType::MSWJ:
+                pecj_operator_ = std::make_shared<OoOJoin::MSWJOperator>();
+                break;
+            case PECJOperatorType::AI:
+                pecj_operator_ = std::make_shared<OoOJoin::AIOperator>();
+                break;
+            case PECJOperatorType::LinearSVI:
+                pecj_operator_ = std::make_shared<OoOJoin::LinearSVIOperator>();
+                break;
+            case PECJOperatorType::IAWJSel:
+                pecj_operator_ = std::make_shared<OoOJoin::IAWJSelOperator>();
+                break;
+            case PECJOperatorType::LazyIAWJSel:
+                pecj_operator_ = std::make_shared<OoOJoin::LazyIAWJSelOperator>();
+                break;
+            case PECJOperatorType::SHJ:
+                pecj_operator_ = std::make_shared<OoOJoin::RawSHJOperator>();
+                break;
+            case PECJOperatorType::PRJ:
+                pecj_operator_ = std::make_shared<OoOJoin::RawPRJOperator>();
+                break;
+            case PECJOperatorType::PECJ:
+                // PECJ uses IMAIAWJOperator internally (same as PECJOperator)
+                pecj_operator_ = std::make_shared<OoOJoin::IMAIAWJOperator>();
+                break;
+            default:
+                // Default to IAWJ
+                pecj_operator_ = std::make_shared<OoOJoin::IAWJOperator>();
+                break;
         }
         
         if (!pecj_operator_) {
@@ -290,6 +344,23 @@ ComputeStatus PECJComputeEngine::executeWindowJoin(uint64_t window_id,
         // Step 3: Get join results
         size_t join_count_after = pecj_operator_->getResult();
         status.join_count = join_count_after - join_count_before;
+        
+        // Step 3.5: Get AQP result if operator supports it
+        PECJOperatorType op_type = stringToOperatorType(config_.operator_type);
+        if (operatorSupportsAQP(op_type)) {
+            size_t aqp_result = pecj_operator_->getAQPResult();
+            status.aqp_estimate = static_cast<double>(aqp_result);
+            status.used_aqp = true;
+            
+            // Calculate AQP error
+            if (status.join_count > 0) {
+                status.aqp_error = std::abs(static_cast<double>(status.join_count) - status.aqp_estimate) 
+                                 / static_cast<double>(status.join_count);
+            }
+            
+            std::cout << "    [DEBUG] AQP result: " << aqp_result 
+                      << ", error: " << (status.aqp_error * 100.0) << "%\n";
+        }
         
         // Debug: Print join results
         std::cout << "    [DEBUG] Join results: before=" << join_count_before 

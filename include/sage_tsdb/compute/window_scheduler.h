@@ -32,9 +32,6 @@ namespace sage_tsdb {
 namespace core {
 class TableManager;
 class StreamTable;
-}
-
-namespace plugins {
 class ResourceHandle;
 }
 }
@@ -49,16 +46,40 @@ enum class TriggerPolicy {
     TimeBased,      ///< Trigger based on wall-clock time
     CountBased,     ///< Trigger based on data count
     Hybrid,         ///< Trigger when either condition is met
+    Watermark,      ///< Trigger based on watermark advancement
     Manual          ///< Manual trigger only (for testing)
 };
 
 /**
- * @brief Window type
+ * @brief Window type for stream processing
+ * 
+ * Supports various window semantics from PECJ:
+ * - Tumbling: Non-overlapping fixed-size windows
+ * - Sliding: Overlapping windows with configurable slide
+ * - Session: Dynamic windows based on activity gaps
+ * - IntraWindow: Single window join (IAWJ) - join within one window only
+ * - MultiStream: Multi-stream window join (MSWJ) - handles multiple streams
  */
 enum class WindowType {
     Tumbling,       ///< Non-overlapping windows
     Sliding,        ///< Overlapping windows with slide interval
-    Session         ///< Session windows (gap-based)
+    Session,        ///< Session windows (gap-based)
+    IntraWindow,    ///< Intra-window join (IAWJ) - single window only
+    MultiStream     ///< Multi-stream window join (MSWJ)
+};
+
+/**
+ * @brief Join semantics for window operations
+ * 
+ * Specifies how tuples are joined within windows:
+ * - Eager: Join immediately when tuples arrive
+ * - Lazy: Delay join until window closes (LazyIAWJSel)
+ * - AQP: Use approximate query processing with error bounds
+ */
+enum class JoinSemantics {
+    Eager,          ///< Immediate join on tuple arrival
+    Lazy,           ///< Delay join until window completion
+    AQP             ///< Approximate query processing
 };
 
 /**
@@ -69,6 +90,9 @@ struct WindowSchedulerConfig {
     WindowType window_type = WindowType::Sliding;
     uint64_t window_len_us = 1000000;     ///< Window length (1s default)
     uint64_t slide_len_us = 500000;       ///< Slide length (500ms default)
+    
+    // Join semantics
+    JoinSemantics join_semantics = JoinSemantics::Eager; ///< Default to eager join
     
     // Trigger policy
     TriggerPolicy trigger_policy = TriggerPolicy::Hybrid;
@@ -175,7 +199,7 @@ public:
     WindowScheduler(const WindowSchedulerConfig& config,
                     PECJComputeEngine* compute_engine,
                     core::TableManager* table_manager,
-                    plugins::ResourceHandle* resource_handle);
+                    core::ResourceHandle* resource_handle);
     
     ~WindowScheduler();
     
@@ -350,7 +374,7 @@ private:
     // External components (not owned)
     PECJComputeEngine* compute_engine_;
     core::TableManager* table_manager_;
-    plugins::ResourceHandle* resource_handle_;
+    core::ResourceHandle* resource_handle_;
     
     // Scheduler state
     std::atomic<bool> running_{false};
