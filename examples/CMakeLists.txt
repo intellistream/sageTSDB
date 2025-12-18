@@ -126,6 +126,35 @@ if(TARGET sage_tsdb_plugins)
         PRIVATE
             ${CMAKE_SOURCE_DIR}/include
     )
+
+    # 4. PECJ vs SHJ Comparison Demo (only in INTEGRATED mode)
+    if(PECJ_MODE STREQUAL "INTEGRATED")
+        add_executable(pecj_shj_comparison_demo
+            pecj_shj_comparison_demo.cpp
+        )
+        
+        target_link_libraries(pecj_shj_comparison_demo
+            PRIVATE
+                sage_tsdb_core
+                sage_tsdb_compute
+        )
+        
+        target_include_directories(pecj_shj_comparison_demo
+            PRIVATE
+                ${CMAKE_SOURCE_DIR}/include
+        )
+        
+        target_compile_definitions(pecj_shj_comparison_demo
+            PRIVATE
+                PECJ_MODE_INTEGRATED
+        )
+        
+        message(STATUS "Building pecj_shj_comparison_demo (PECJ Integrated Mode)")
+        
+        list(APPEND EXAMPLE_TARGETS pecj_shj_comparison_demo)
+        message(STATUS "  - pecj_shj_comparison_demo")
+    endif()
+
     
     # Add PECJ demos to install targets
     list(APPEND EXAMPLE_TARGETS 

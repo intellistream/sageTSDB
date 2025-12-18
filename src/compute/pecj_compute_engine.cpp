@@ -282,9 +282,36 @@ ComputeStatus PECJComputeEngine::executeWindowJoin(uint64_t window_id,
         status.input_s_count = s_data_tsdb.size();
         status.input_r_count = r_data_tsdb.size();
         
-        // Debug: Print query results
+        // Debug: Print query range and results for first window
+        if (window_id == 0) {
+            std::cout << "    [DEBUG] Window range: [" << time_range.start_us 
+                      << ", " << time_range.end_us << "] (length=" << (time_range.end_us - time_range.start_us) << " us)\n";
+        }
+        
         std::cout << "    [DEBUG] Queried S: " << s_data_tsdb.size() 
-                  << " tuples, R: " << r_data_tsdb.size() << " tuples\n";
+                  << " tuples, R: " << r_data_tsdb.size() << " tuples";
+        
+        // Debug: Check for matching keys in first window
+        if (window_id == 0 && s_data_tsdb.size() > 0 && r_data_tsdb.size() > 0) {
+            std::set<uint64_t> s_keys, r_keys;
+            for (const auto& data : s_data_tsdb) {
+                if (data.tags.count("key")) {
+                    s_keys.insert(std::stoull(data.tags.at("key")));
+                }
+            }
+            for (const auto& data : r_data_tsdb) {
+                if (data.tags.count("key")) {
+                    r_keys.insert(std::stoull(data.tags.at("key")));
+                }
+            }
+            size_t common_keys = 0;
+            for (const auto& key : s_keys) {
+                if (r_keys.count(key)) common_keys++;
+            }
+            std::cout << " [S_unique=" << s_keys.size() << ", R_unique=" << r_keys.size() 
+                      << ", Common=" << common_keys << "]";
+        }
+        std::cout << "\n";
         
         // Step 2: Feed data to PECJ operator
         size_t join_count_before = pecj_operator_->getResult();
@@ -302,14 +329,21 @@ ComputeStatus PECJComputeEngine::executeWindowJoin(uint64_t window_id,
                 value = static_cast<OoOJoin::valueType>(std::stod(data.fields.at("value")));
             }
             
-            auto tuple = std::make_shared<OoOJoin::TrackTuple>(key, value, data.timestamp, data.timestamp);
+            // For this dataset, use arrivalTime as both eventTime and arrivalTime
+            // (eventTime field in CSV has different scale/semantics)
+            OoOJoin::tsType eventTime = data.timestamp;    // timestamp stores arrivalTime
+            OoOJoin::tsType arrivalTime = data.timestamp;  // timestamp stores arrivalTime
+            
+            auto tuple = std::make_shared<OoOJoin::TrackTuple>(key, value, eventTime, arrivalTime);
             pecj_operator_->feedTupleS(tuple);
             s_fed++;
             
-            // Debug: Print first few tuples
-            if (s_fed <= 3) {
+            // Debug: Print first few tuples with full details
+            if (window_id == 0 && s_fed <= 5) {
                 std::cout << "    [DEBUG] Fed S tuple: key=" << key 
                           << ", value=" << value 
+                          << ", eventTime=" << eventTime
+                          << ", arrivalTime=" << arrivalTime
                           << ", timestamp=" << data.timestamp << "\n";
             }
         }
@@ -328,20 +362,27 @@ ComputeStatus PECJComputeEngine::executeWindowJoin(uint64_t window_id,
                 value = static_cast<OoOJoin::valueType>(std::stod(data.fields.at("value")));
             }
             
-            auto tuple = std::make_shared<OoOJoin::TrackTuple>(key, value, data.timestamp, data.timestamp);
+            // For this dataset, use arrivalTime as both eventTime and arrivalTime
+            // (eventTime field in CSV has different scale/semantics)
+            OoOJoin::tsType eventTime = data.timestamp;    // timestamp stores arrivalTime
+            OoOJoin::tsType arrivalTime = data.timestamp;  // timestamp stores arrivalTime
+            
+            auto tuple = std::make_shared<OoOJoin::TrackTuple>(key, value, eventTime, arrivalTime);
             pecj_operator_->feedTupleR(tuple);
             r_fed++;
             
-            // Debug: Print first few tuples
-            if (r_fed <= 3) {
+            // Debug: Print first few tuples with full details
+            if (window_id == 0 && r_fed <= 5) {
                 std::cout << "    [DEBUG] Fed R tuple: key=" << key 
                           << ", value=" << value 
+                          << ", eventTime=" << eventTime
+                          << ", arrivalTime=" << arrivalTime
                           << ", timestamp=" << data.timestamp << "\n";
             }
         }
         std::cout << "    [DEBUG] Fed " << r_fed << " R tuples\n";
         
-        // Step 3: Get join results
+        // Step 3: Get join results BEFORE stopping (stop() may clear state)
         size_t join_count_after = pecj_operator_->getResult();
         status.join_count = join_count_after - join_count_before;
         
@@ -366,6 +407,9 @@ ComputeStatus PECJComputeEngine::executeWindowJoin(uint64_t window_id,
         std::cout << "    [DEBUG] Join results: before=" << join_count_before 
                   << ", after=" << join_count_after 
                   << ", delta=" << status.join_count << "\n";
+        
+        // Step 4: Stop operator after getting results
+        pecj_operator_->stop();
         
         // Step 4: Calculate metrics
         auto end_time = std::chrono::steady_clock::now();
