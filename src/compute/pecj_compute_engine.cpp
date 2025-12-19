@@ -213,18 +213,12 @@ bool PECJComputeEngine::createPECJOperator() {
             return false;
         }
         
-        // Set window parameters
+        // Set initial window parameters (will be adjusted in executeWindowJoin)
         pecj_operator_->setWindow(config_.window_len_us, config_.slide_len_us);
         
-        // Synchronize time structure
-        struct timeval tv;
-        gettimeofday(&tv, nullptr);
-        pecj_operator_->syncTimeStruct(tv);
-        
-        // Start the operator
-        if (!pecj_operator_->start()) {
-            return false;
-        }
+        // Note: We don't call syncTimeStruct or start() here anymore.
+        // These will be called in executeWindowJoin() with the correct
+        // window parameters based on actual data timestamps.
         
         return true;
         
@@ -313,7 +307,60 @@ ComputeStatus PECJComputeEngine::executeWindowJoin(uint64_t window_id,
         }
         std::cout << "\n";
         
-        // Step 2: Feed data to PECJ operator
+        // =====================================================================
+        // CRITICAL FIX: Reinitialize PECJ operator for each window execution
+        // 
+        // PECJ Window Semantics:
+        // - start() sets window to [0, windowLen] (relative time)
+        // - feedTuple checks if tuple.eventTime is within [startTime, endTime]
+        // - We need to normalize eventTime to be within the window range
+        // =====================================================================
+        
+        // Calculate the min timestamp from queried data
+        uint64_t min_timestamp = UINT64_MAX;
+        uint64_t max_timestamp = 0;
+        
+        for (const auto& data : s_data_tsdb) {
+            if (data.timestamp < min_timestamp) min_timestamp = data.timestamp;
+            if (data.timestamp > max_timestamp) max_timestamp = data.timestamp;
+        }
+        for (const auto& data : r_data_tsdb) {
+            if (data.timestamp < min_timestamp) min_timestamp = data.timestamp;
+            if (data.timestamp > max_timestamp) max_timestamp = data.timestamp;
+        }
+        
+        // Handle empty data case
+        if (min_timestamp == UINT64_MAX) {
+            min_timestamp = 0;
+            max_timestamp = config_.window_len_us;
+        }
+        
+        // Calculate window length to cover all data with some margin
+        uint64_t actual_data_span = max_timestamp - min_timestamp + 1;
+        uint64_t effective_window_len = std::max(config_.window_len_us, actual_data_span + 1000);
+        
+        std::cout << "    [DEBUG] Data span: " << actual_data_span << " us, "
+                  << "min_ts=" << min_timestamp << ", max_ts=" << max_timestamp << "\n";
+        std::cout << "    [DEBUG] Effective window length: " << effective_window_len << " us\n";
+        
+        // Reconfigure PECJ operator with correct window size
+        pecj_operator_->setWindow(effective_window_len, config_.slide_len_us);
+        
+        // Synchronize time structure - this is the reference point for relative time
+        struct timeval tv;
+        gettimeofday(&tv, nullptr);
+        pecj_operator_->syncTimeStruct(tv);
+        
+        // CRITICAL: Call start() to reset window state to [0, effective_window_len]
+        if (!pecj_operator_->start()) {
+            status.success = false;
+            status.error = "Failed to restart PECJ operator";
+            return status;
+        }
+        
+        std::cout << "    [DEBUG] PECJ operator restarted with window [0, " << effective_window_len << "]\n";
+        
+        // Step 2: Feed data to PECJ operator with NORMALIZED eventTime
         size_t join_count_before = pecj_operator_->getResult();
         
         size_t s_fed = 0;
@@ -329,10 +376,10 @@ ComputeStatus PECJComputeEngine::executeWindowJoin(uint64_t window_id,
                 value = static_cast<OoOJoin::valueType>(std::stod(data.fields.at("value")));
             }
             
-            // For this dataset, use arrivalTime as both eventTime and arrivalTime
-            // (eventTime field in CSV has different scale/semantics)
-            OoOJoin::tsType eventTime = data.timestamp;    // timestamp stores arrivalTime
-            OoOJoin::tsType arrivalTime = data.timestamp;  // timestamp stores arrivalTime
+            // CRITICAL FIX: Normalize eventTime to be within [0, window_len]
+            // eventTime is what PECJ uses to determine if tuple is in window
+            OoOJoin::tsType eventTime = data.timestamp - min_timestamp;  // Normalized to start from 0
+            OoOJoin::tsType arrivalTime = data.timestamp - min_timestamp;  // Also normalized
             
             auto tuple = std::make_shared<OoOJoin::TrackTuple>(key, value, eventTime, arrivalTime);
             pecj_operator_->feedTupleS(tuple);
@@ -344,7 +391,7 @@ ComputeStatus PECJComputeEngine::executeWindowJoin(uint64_t window_id,
                           << ", value=" << value 
                           << ", eventTime=" << eventTime
                           << ", arrivalTime=" << arrivalTime
-                          << ", timestamp=" << data.timestamp << "\n";
+                          << " (original_ts=" << data.timestamp << ")\n";
             }
         }
         std::cout << "    [DEBUG] Fed " << s_fed << " S tuples\n";
@@ -362,10 +409,9 @@ ComputeStatus PECJComputeEngine::executeWindowJoin(uint64_t window_id,
                 value = static_cast<OoOJoin::valueType>(std::stod(data.fields.at("value")));
             }
             
-            // For this dataset, use arrivalTime as both eventTime and arrivalTime
-            // (eventTime field in CSV has different scale/semantics)
-            OoOJoin::tsType eventTime = data.timestamp;    // timestamp stores arrivalTime
-            OoOJoin::tsType arrivalTime = data.timestamp;  // timestamp stores arrivalTime
+            // CRITICAL FIX: Normalize eventTime to be within [0, window_len]
+            OoOJoin::tsType eventTime = data.timestamp - min_timestamp;  // Normalized to start from 0
+            OoOJoin::tsType arrivalTime = data.timestamp - min_timestamp;  // Also normalized
             
             auto tuple = std::make_shared<OoOJoin::TrackTuple>(key, value, eventTime, arrivalTime);
             pecj_operator_->feedTupleR(tuple);
@@ -377,7 +423,7 @@ ComputeStatus PECJComputeEngine::executeWindowJoin(uint64_t window_id,
                           << ", value=" << value 
                           << ", eventTime=" << eventTime
                           << ", arrivalTime=" << arrivalTime
-                          << ", timestamp=" << data.timestamp << "\n";
+                          << " (original_ts=" << data.timestamp << ")\n";
             }
         }
         std::cout << "    [DEBUG] Fed " << r_fed << " R tuples\n";
