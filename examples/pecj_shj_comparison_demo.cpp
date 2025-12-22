@@ -12,9 +12,27 @@
  *  - sageTSDB ResourceManager 管理所有线程和内存资源
  *  - 使用 PECJComputeEngine::executeWindowJoin() 执行窗口连接
  *
+ * PECJ 时间戳处理：
+ *  - eventTime（事件时间）：用于窗口分配，决定元组属于哪个窗口
+ *  - arrivalTime（到达时间）：用于数据流顺序处理和 Watermark 生成
+ *
+ * Watermark 策略：
+ *  - ArrivalWM（默认）：当 arrivalTime >= nextWMPoint 时触发窗口计算
+ *  - LatenessWM：基于 eventTime，当 windowUpperBound - earlierEmit + lateness < maxEventTime 时触发
+ *
+ * 处理模式：
+ *  - Stream Mode（默认）：按 arrivalTime 顺序逐窗口处理，模拟真实流场景
+ *  - Batch Mode：一次性处理所有数据，用于性能基准测试
+ *
  * 编译：需要启用 PECJ_MODE_INTEGRATED
  *   cmake -DSAGE_TSDB_ENABLE_PECJ=ON -DPECJ_MODE=INTEGRATED ..
  *   make pecj_shj_comparison_demo
+ *
+ * 使用示例：
+ *   ./pecj_shj_comparison_demo                           # 默认 stream 模式
+ *   ./pecj_shj_comparison_demo --batch                   # batch 模式
+ *   ./pecj_shj_comparison_demo --watermark-tag lateness  # 使用 LatenessWM
+ *   ./pecj_shj_comparison_demo --watermark-ms 50         # 设置 watermark 间隔
  */
 
 #include <iostream>
@@ -53,7 +71,18 @@ struct DemoConfig {
     int threads = 4;
     uint64_t window_len_us = 10000;  // 10ms window
     uint64_t slide_len_us = 5000;    // 5ms slide
-    int64_t time_unit_multiplier = 1000; // CSV in ms, convert to us
+    int64_t time_unit_multiplier = 1; // CSV already in us, no conversion needed
+    
+    // Watermark 配置
+    // 注意：PECJ 的 ArrivalWM 检查 arrivalTime >= nextWMPoint 来触发 watermark
+    // CSV 数据 arrivalTime 范围约 5,202 us 到 2,155,455 us（约 2.15 秒）
+    // 窗口大小 10ms，滑动步长 5ms，watermark 间隔应略大于窗口大小以确保窗口数据完整
+    std::string watermark_tag = "arrival";  // "arrival" 或 "lateness"
+    uint64_t watermark_time_ms = 10;        // 10ms = 10000us，与窗口大小相同
+    uint64_t lateness_ms = 5;               // 对于 LatenessWM：允许的最大迟到时间 5ms
+    
+    // 是否按 arrivalTime 逐个 feed 数据（模拟真实流场景）
+    bool stream_mode = true;
     
     bool verbose = true;
 };
@@ -162,8 +191,14 @@ ExperimentStats runSingleExperiment(
     pecj_config.stream_s_table = "stream_s";
     pecj_config.stream_r_table = "stream_r";
     pecj_config.result_table = "join_results";
-    // 设置一个很大的 watermark 时间，避免过早关闭窗口
-    pecj_config.watermark_time_ms = 1000000;  // 1000 seconds
+    
+    // Watermark 配置：使用合理的值模拟真实流处理场景
+    // - watermark_tag: "arrival" 表示使用到达时间生成 watermark
+    // - watermark_time_ms: 每隔多少毫秒生成一次 watermark（触发窗口计算）
+    // - lateness_ms: 允许的最大迟到时间
+    pecj_config.watermark_tag = config.watermark_tag;
+    pecj_config.watermark_time_ms = config.watermark_time_ms;
+    pecj_config.lateness_ms = config.lateness_ms;
     
     compute::PECJComputeEngine pecj_engine;
     
@@ -352,31 +387,84 @@ ExperimentStats runSingleExperiment(
     }
     
     // ------------------------------------------------------------------------
-    // 5. 执行 Join 计算（一次性feed所有数据）
+    // 5. 执行 Join 计算
     // ------------------------------------------------------------------------
     if (config.verbose) {
-        std::cout << "  Executing join computation...\n";
+        std::cout << "  Executing join computation";
+        if (config.stream_mode) {
+            std::cout << " (stream mode: feeding data incrementally by arrivalTime)...\n";
+        } else {
+            std::cout << " (batch mode: feeding all data at once)...\n";
+        }
     }
     
     auto compute_start = std::chrono::steady_clock::now();
     
-    // PECJ 期望按 arrivalTime 顺序逐个feed数据
-    // 为了性能对比，我们一次性feed所有数据
     int64_t min_time = std::min(s_subset[0].arrival_time, r_subset[0].arrival_time);
     int64_t max_time_s = s_subset.back().arrival_time;
     int64_t max_time_r = r_subset.back().arrival_time;
     int64_t max_time = std::max(max_time_s, max_time_r);
     
-    // 查询所有数据范围
-    compute::TimeRange full_range;
-    full_range.start_us = min_time;
-    full_range.end_us = max_time + 1000;  // +1ms to include last timestamp
-    
-    auto status = pecj_engine.executeWindowJoin(0, full_range);
-    
-    if (status.success) {
-        stats.windows_executed = 1;
-        stats.total_join_results = status.join_count;
+    if (config.stream_mode) {
+        // ============================================================
+        // Stream Mode: 按 arrivalTime 顺序逐个 feed 数据，模拟真实流场景
+        // 
+        // PECJ 时间戳语义：
+        // - eventTime: 用于窗口分配（判断元组属于哪个窗口）
+        // - arrivalTime: 用于数据流顺序处理和 Watermark 生成
+        // 
+        // Watermark 策略：
+        // - ArrivalWM（默认）：当 arrivalTime >= nextWMPoint 时触发
+        // - LatenessWM：基于 eventTime 的迟到容忍机制
+        // ============================================================
+        
+        // 按 slide_len_us 划分窗口，逐个窗口执行 join
+        uint64_t window_start = min_time;
+        uint64_t window_end = min_time + config.window_len_us;
+        size_t window_count = 0;
+        
+        while (window_start <= max_time) {
+            compute::TimeRange window_range;
+            window_range.start_us = window_start;
+            window_range.end_us = std::min(window_end, static_cast<uint64_t>(max_time + 1000));
+            
+            auto status = pecj_engine.executeWindowJoin(window_count, window_range);
+            
+            if (status.success) {
+                stats.windows_executed++;
+                stats.total_join_results += status.join_count;
+            }
+            
+            // 滑动窗口
+            window_start += config.slide_len_us;
+            window_end += config.slide_len_us;
+            window_count++;
+            
+            // 防止无限循环
+            if (window_count > 100000) {
+                std::cerr << "Warning: Too many windows, stopping early\n";
+                break;
+            }
+        }
+        
+        if (config.verbose) {
+            std::cout << "  Executed " << stats.windows_executed << " windows\n";
+        }
+        
+    } else {
+        // ============================================================
+        // Batch Mode: 一次性 feed 所有数据（用于性能基准测试）
+        // ============================================================
+        compute::TimeRange full_range;
+        full_range.start_us = min_time;
+        full_range.end_us = max_time + 1000;  // +1ms to include last timestamp
+        
+        auto status = pecj_engine.executeWindowJoin(0, full_range);
+        
+        if (status.success) {
+            stats.windows_executed = 1;
+            stats.total_join_results = status.join_count;
+        }
     }
     
     auto compute_end = std::chrono::steady_clock::now();
@@ -450,9 +538,21 @@ int main(int argc, char** argv) {
                       << "  --threads N           Number of threads (default: 4)\n"
                       << "  --window-us N         Window length in microseconds (default: 10000)\n"
                       << "  --slide-us N          Slide length in microseconds (default: 5000)\n"
+                      << "  --watermark-tag TAG   Watermark strategy: 'arrival' or 'lateness' (default: arrival)\n"
+                      << "  --watermark-ms N      Watermark time interval in ms (default: 20)\n"
+                      << "  --lateness-ms N       Max allowed lateness in ms (default: 10)\n"
+                      << "  --batch               Use batch mode instead of stream mode\n"
                       << "  --quiet               Reduce output verbosity\n"
                       << "  --help                Show this help\n";
             return 0;
+        } else if (arg == "--watermark-tag" && i + 1 < argc) {
+            config.watermark_tag = argv[++i];
+        } else if (arg == "--watermark-ms" && i + 1 < argc) {
+            config.watermark_time_ms = std::stoull(argv[++i]);
+        } else if (arg == "--lateness-ms" && i + 1 < argc) {
+            config.lateness_ms = std::stoull(argv[++i]);
+        } else if (arg == "--batch") {
+            config.stream_mode = false;
         }
     }
     
@@ -464,6 +564,11 @@ int main(int argc, char** argv) {
     std::cout << "  Window Length    : " << (config.window_len_us / 1000.0) << " ms\n";
     std::cout << "  Slide Length     : " << (config.slide_len_us / 1000.0) << " ms\n";
     std::cout << "  Threads          : " << config.threads << "\n";
+    std::cout << "\n  [Watermark Config]\n";
+    std::cout << "  Watermark Tag    : " << config.watermark_tag << "\n";
+    std::cout << "  Watermark Time   : " << config.watermark_time_ms << " ms\n";
+    std::cout << "  Lateness         : " << config.lateness_ms << " ms\n";
+    std::cout << "  Processing Mode  : " << (config.stream_mode ? "Stream (sliding window)" : "Batch (one-shot)") << "\n";
     std::cout << std::endl;
     
 #ifdef PECJ_MODE_INTEGRATED

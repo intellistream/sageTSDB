@@ -361,7 +361,8 @@ ComputeStatus PECJComputeEngine::executeWindowJoin(uint64_t window_id,
         std::cout << "    [DEBUG] PECJ operator restarted with window [0, " << effective_window_len << "]\n";
         
         // Step 2: Feed data to PECJ operator with NORMALIZED eventTime
-        size_t join_count_before = pecj_operator_->getResult();
+        // Use getAQPResult() to get results with prediction compensation (for IMA operator)
+        size_t join_count_before = pecj_operator_->getAQPResult();
         
         size_t s_fed = 0;
         for (const auto& data : s_data_tsdb) {
@@ -429,7 +430,9 @@ ComputeStatus PECJComputeEngine::executeWindowJoin(uint64_t window_id,
         std::cout << "    [DEBUG] Fed " << r_fed << " R tuples\n";
         
         // Step 3: Get join results BEFORE stopping (stop() may clear state)
-        size_t join_count_after = pecj_operator_->getResult();
+        // Use getAQPResult() to get results with prediction compensation (for IMA operator)
+        // For SHJ, getAQPResult() returns the same as getResult()
+        size_t join_count_after = pecj_operator_->getAQPResult();
         status.join_count = join_count_after - join_count_before;
         
         // Step 3.5: Get AQP result if operator supports it
