@@ -576,13 +576,6 @@ BenchmarkResult runPluginModeBenchmark(
     }
     std::sort(all_data.begin(), all_data.end());
     
-    // 计算数据时间跨度，用于配置 watermark
-    int64_t data_time_span_ms = 10000;  // 默认 10 秒
-    if (!all_data.empty()) {
-        int64_t time_span_us = all_data.back().data.timestamp - all_data.front().data.timestamp;
-        data_time_span_ms = (time_span_us / 1000) + 1000;  // 转换为 ms 并增加 1 秒余量
-    }
-    
     // ========== Setup Phase ==========
     auto setup_start = std::chrono::steady_clock::now();
     
