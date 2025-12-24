@@ -25,7 +25,7 @@
 namespace sage_tsdb {
 class TimeSeriesDB;  // TimeSeriesDB is in sage_tsdb namespace, not sage_tsdb::core
 
-namespace plugins {
+namespace core {
 class ResourceHandle;
 }
 }
@@ -54,6 +54,97 @@ struct TimeRange {
 };
 
 /**
+ * @brief PECJ operator type enumeration
+ * 
+ * Defines all available operator types from the PECJ library:
+ * - IAWJ: Intra-window join operator, only considers a single window
+ * - MeanAQP: AQP strategy using exponential weighted moving average for prediction
+ * - IMA: Incremental Moving Average IAWJ with AQP support (EAGER join)
+ * - MSWJ: Multi-stream window join (ICDE2016)
+ * - AI: AI-based operator
+ * - LinearSVI: Linear Stochastic Variational Inference operator
+ * - IAWJSel: IAWJ with selectivity-based AQP strategy (coarse-grained)
+ * - LazyIAWJSel: Lazy evaluation PECJ join with selectivity
+ * - SHJ: Symmetric Hash Join (raw baseline)
+ * - PRJ: Progressive Join (raw baseline)
+ * - PECJ: PECJ operator with full compensation
+ */
+enum class PECJOperatorType {
+    IAWJ,           ///< Intra-window join - single window only
+    MeanAQP,        ///< Mean-based AQP prediction
+    IMA,            ///< Incremental Moving Average IAWJ (EAGER join)
+    MSWJ,           ///< Multi-stream Window Join (ICDE2016)
+    AI,             ///< AI-based operator
+    LinearSVI,      ///< Linear Stochastic Variational Inference
+    IAWJSel,        ///< IAWJ with selectivity-based AQP
+    LazyIAWJSel,    ///< Lazy evaluation PECJ join
+    SHJ,            ///< Symmetric Hash Join (baseline)
+    PRJ,            ///< Progressive Join (baseline)
+    PECJ            ///< Full PECJ operator
+};
+
+/**
+ * @brief Convert operator type enum to string tag
+ * @param type The operator type enum
+ * @return String tag used by PECJ OperatorTable
+ */
+inline std::string operatorTypeToString(PECJOperatorType type) {
+    switch (type) {
+        case PECJOperatorType::IAWJ:        return "IAWJ";
+        case PECJOperatorType::MeanAQP:     return "MeanAQP";
+        case PECJOperatorType::IMA:         return "IMA";
+        case PECJOperatorType::MSWJ:        return "MSWJ";
+        case PECJOperatorType::AI:          return "AI";
+        case PECJOperatorType::LinearSVI:   return "LinearSVI";
+        case PECJOperatorType::IAWJSel:     return "IAWJSel";
+        case PECJOperatorType::LazyIAWJSel: return "LazyIAWJSel";
+        case PECJOperatorType::SHJ:         return "SHJ";
+        case PECJOperatorType::PRJ:         return "PRJ";
+        case PECJOperatorType::PECJ:        return "IMA";  // PECJ uses IMA internally
+        default:                            return "IAWJ";
+    }
+}
+
+/**
+ * @brief Convert string tag to operator type enum
+ * @param tag The string tag
+ * @return Corresponding operator type enum
+ */
+inline PECJOperatorType stringToOperatorType(const std::string& tag) {
+    if (tag == "IAWJ")        return PECJOperatorType::IAWJ;
+    if (tag == "MeanAQP")     return PECJOperatorType::MeanAQP;
+    if (tag == "IMA")         return PECJOperatorType::IMA;
+    if (tag == "MSWJ")        return PECJOperatorType::MSWJ;
+    if (tag == "AI")          return PECJOperatorType::AI;
+    if (tag == "LinearSVI")   return PECJOperatorType::LinearSVI;
+    if (tag == "IAWJSel")     return PECJOperatorType::IAWJSel;
+    if (tag == "LazyIAWJSel") return PECJOperatorType::LazyIAWJSel;
+    if (tag == "SHJ")         return PECJOperatorType::SHJ;
+    if (tag == "PRJ")         return PECJOperatorType::PRJ;
+    if (tag == "PECJ" || tag == "PEC") return PECJOperatorType::PECJ;
+    return PECJOperatorType::IAWJ;  // Default
+}
+
+/**
+ * @brief Check if operator supports AQP (Approximate Query Processing)
+ * @param type The operator type
+ * @return true if operator supports getAQPResult()
+ */
+inline bool operatorSupportsAQP(PECJOperatorType type) {
+    switch (type) {
+        case PECJOperatorType::MeanAQP:
+        case PECJOperatorType::IMA:
+        case PECJOperatorType::MSWJ:
+        case PECJOperatorType::IAWJSel:
+        case PECJOperatorType::LazyIAWJSel:
+        case PECJOperatorType::PECJ:
+            return true;
+        default:
+            return false;
+    }
+}
+
+/**
  * @brief PECJ algorithm configuration
  */
 struct ComputeConfig {
@@ -62,9 +153,24 @@ struct ComputeConfig {
     uint64_t slide_len_us = 500000;       ///< Slide length (500ms default)
     
     // Algorithm parameters
-    std::string operator_type = "IAWJ";   ///< Operator type: IAWJ, MWAY, etc.
+    std::string operator_type = "IAWJ";   ///< Operator type string tag
+    PECJOperatorType operator_enum = PECJOperatorType::IAWJ; ///< Operator type enum
     uint64_t max_delay_us = 100000;       ///< Maximum allowed delay (100ms)
     double aqp_threshold = 0.05;          ///< AQP error threshold (5%)
+    
+    // PECJ-specific parameters
+    uint64_t s_buffer_len = 100000;       ///< S buffer size
+    uint64_t r_buffer_len = 100000;       ///< R buffer size
+    uint64_t time_step_us = 1000;         ///< Simulation time step in us
+    std::string watermark_tag = "arrival"; ///< Watermark generator tag (arrival, lateness)
+    uint64_t watermark_time_ms = 100;     ///< Watermark time for ArrivalWM (ms)
+    uint64_t lateness_ms = 50;            ///< Max allowed lateness for LatenessWM (ms)
+    
+    // IMA/PECJ specific
+    bool ima_disable_compensation = false; ///< Disable compensation in IMA (simple eager join)
+    
+    // MSWJ specific
+    bool mswj_compensation = false;        ///< Enable linear compensation in MSWJ
     
     // Resource limits
     size_t max_memory_bytes = 2ULL * 1024 * 1024 * 1024;  ///< 2GB default
@@ -173,7 +279,7 @@ public:
      */
     bool initialize(const ComputeConfig& config,
                    TimeSeriesDB* db,
-                   plugins::ResourceHandle* resource_handle);
+                   core::ResourceHandle* resource_handle);
     
     /**
      * @brief Execute window join computation (synchronous call)
@@ -219,7 +325,7 @@ public:
 private:
     // === Core Components ===
     TimeSeriesDB* db_;                          ///< Database reference (not owned)
-    plugins::ResourceHandle* resource_handle_;  ///< Resource handle (not owned)
+    core::ResourceHandle* resource_handle_;     ///< Resource handle (not owned)
     ComputeConfig config_;                      ///< Algorithm configuration
     std::atomic<bool> initialized_;             ///< Initialization flag
     
