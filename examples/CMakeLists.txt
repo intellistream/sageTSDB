@@ -127,8 +127,8 @@ if(TARGET sage_tsdb_plugins)
             ${CMAKE_SOURCE_DIR}/include
     )
 
-    # 4. PECJ vs SHJ Comparison Demo (only in INTEGRATED mode)
-    if(PECJ_MODE STREQUAL "INTEGRATED")
+    # 4. PECJ vs SHJ Comparison Demo (only in INTEGRATED mode with compute library)
+    if(PECJ_MODE STREQUAL "INTEGRATED" AND TARGET sage_tsdb_compute)
         add_executable(pecj_shj_comparison_demo
             pecj_shj_comparison_demo.cpp
         )
@@ -172,8 +172,8 @@ if(TARGET sage_tsdb_plugins)
             ${CMAKE_SOURCE_DIR}/include
     )
     
-    # If INTEGRATED mode is enabled, link compute library and add definition
-    if(PECJ_MODE STREQUAL "INTEGRATED")
+    # If INTEGRATED mode is enabled and compute library exists, link compute library and add definition
+    if(PECJ_MODE STREQUAL "INTEGRATED" AND TARGET sage_tsdb_compute)
         target_link_libraries(pecj_integrated_vs_plugin_benchmark
             PRIVATE
                 sage_tsdb_compute
