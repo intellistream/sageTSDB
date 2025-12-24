@@ -88,6 +88,8 @@ public:
         uint64_t time_step_us = 1000;        // Internal time step
         size_t s_buffer_len = 10000;         // S stream buffer size
         size_t r_buffer_len = 10000;         // R stream buffer size
+        uint64_t watermark_time_ms = 10;     // Watermark interval in ms (how often to trigger watermark)
+        std::string wm_tag = "arrival";      // Watermark strategy: "arrival", "lateness", "period", etc.
     };
     
     explicit PECJAdapter(const PluginConfig& config);
@@ -204,6 +206,9 @@ private:
     
     // Time base for PECJ
     struct timeval time_base_;
+    
+    // Minimum timestamp seen (for normalization) - used to normalize arrival times
+    uint64_t min_timestamp_ = 0;
 #endif
     
     // Operator type

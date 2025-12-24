@@ -62,8 +62,8 @@ using namespace sage_tsdb::utils;
 // ============================================================================
 
 struct DemoConfig {
-    std::string s_file = "../examples/datasets/sTuple.csv";
-    std::string r_file = "../examples/datasets/rTuple.csv";
+    std::string s_file = "../../examples/datasets/sTuple.csv";
+    std::string r_file = "../../examples/datasets/rTuple.csv";
     
     size_t small_count = 5000;      // 小数据量实验
     size_t large_count = 100000;    // 大数据量实验

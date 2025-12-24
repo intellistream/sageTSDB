@@ -155,6 +155,41 @@ if(TARGET sage_tsdb_plugins)
         message(STATUS "  - pecj_shj_comparison_demo")
     endif()
 
+    # 5. PECJ Integrated vs Plugin Mode Benchmark
+    # This benchmark compares performance between Integrated Mode and Plugin Mode
+    add_executable(pecj_integrated_vs_plugin_benchmark
+        pecj_integrated_vs_plugin_benchmark.cpp
+    )
+    
+    target_link_libraries(pecj_integrated_vs_plugin_benchmark
+        PRIVATE
+            sage_tsdb_core
+            sage_tsdb_plugins
+    )
+    
+    target_include_directories(pecj_integrated_vs_plugin_benchmark
+        PRIVATE
+            ${CMAKE_SOURCE_DIR}/include
+    )
+    
+    # If INTEGRATED mode is enabled, link compute library and add definition
+    if(PECJ_MODE STREQUAL "INTEGRATED")
+        target_link_libraries(pecj_integrated_vs_plugin_benchmark
+            PRIVATE
+                sage_tsdb_compute
+        )
+        target_compile_definitions(pecj_integrated_vs_plugin_benchmark
+            PRIVATE
+                PECJ_MODE_INTEGRATED
+        )
+        message(STATUS "Building pecj_integrated_vs_plugin_benchmark (Full Mode: Integrated + Plugin)")
+    else()
+        message(STATUS "Building pecj_integrated_vs_plugin_benchmark (Plugin Mode Only)")
+    endif()
+    
+    list(APPEND EXAMPLE_TARGETS pecj_integrated_vs_plugin_benchmark)
+    message(STATUS "  - pecj_integrated_vs_plugin_benchmark")
+
     
     # Add PECJ demos to install targets
     list(APPEND EXAMPLE_TARGETS 

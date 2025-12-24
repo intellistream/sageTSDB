@@ -59,6 +59,14 @@ void PECJAdapter::parseConfig(const PluginConfig& config) {
         window_config_.r_buffer_len = std::stoull(config.at("rLen"));
     }
     
+    // Parse watermark configuration
+    if (config.count("watermarkTimeMs")) {
+        window_config_.watermark_time_ms = std::stoull(config.at("watermarkTimeMs"));
+    }
+    if (config.count("wmTag")) {
+        window_config_.wm_tag = config.at("wmTag");
+    }
+    
     // Parse operator type
     if (config.count("operator")) {
         std::string op = config.at("operator");
@@ -139,6 +147,14 @@ bool PECJAdapter::initializePECJ() {
         pecj_config_->edit("rLen", static_cast<uint64_t>(window_config_.r_buffer_len));
         pecj_config_->edit("timeStep", static_cast<uint64_t>(window_config_.time_step_us));
         pecj_config_->edit("latenessMs", static_cast<uint64_t>(window_config_.lateness_ms));
+        
+        // CRITICAL: Set watermark configuration for proper batch processing
+        // Without this, watermark triggers too early (default 10ms) and terminates processing
+        pecj_config_->edit("watermarkTimeMs", static_cast<uint64_t>(window_config_.watermark_time_ms));
+        pecj_config_->edit("wmTag", window_config_.wm_tag);
+        
+        std::cout << "  Watermark Tag: " << window_config_.wm_tag << std::endl;
+        std::cout << "  Watermark Time: " << window_config_.watermark_time_ms << " ms" << std::endl;
         
         // Get operator from table
         OoOJoin::OperatorTable op_table;
@@ -271,6 +287,11 @@ void PECJAdapter::reset() {
     join_results_.store(0);
     total_latency_us_.store(0);
     
+#ifdef PECJ_FULL_INTEGRATION
+    // Reset timestamp normalization
+    min_timestamp_ = 0;
+#endif
+    
     // Clear data queue
     {
         std::lock_guard<std::mutex> qlock(queue_mutex_);
@@ -375,13 +396,22 @@ std::shared_ptr<OoOJoin::TrackTuple> PECJAdapter::convertToTrackTuple(
     
     // Create TrackTuple
     auto tuple = std::make_shared<OoOJoin::TrackTuple>(key, value);
-    tuple->eventTime = static_cast<uint64_t>(data.timestamp);
     
-    // Set arrival time to current time
-    struct timeval now;
-    gettimeofday(&now, nullptr);
-    tuple->arrivalTime = (now.tv_sec - time_base_.tv_sec) * 1000000ULL + 
-                         (now.tv_usec - time_base_.tv_usec);
+    // CRITICAL FIX: Normalize BOTH eventTime and arrivalTime
+    // This matches Integrated Mode behavior where all timestamps start from 0.
+    // 
+    // PECJ's window logic uses eventTime to determine if tuple is within window bounds.
+    // PECJ's watermark logic uses arrivalTime (for ArrivalWM) or eventTime (for LatenessWM).
+    // 
+    // Without normalization, data timestamps (e.g., 1000000000) would be outside
+    // the typical window range (e.g., [0, 10000]).
+    if (min_timestamp_ == 0 && data.timestamp > 0) {
+        min_timestamp_ = static_cast<uint64_t>(data.timestamp);
+    }
+    
+    uint64_t normalized_time = static_cast<uint64_t>(data.timestamp) - min_timestamp_;
+    tuple->eventTime = normalized_time;
+    tuple->arrivalTime = normalized_time;
     
     // Set stream ID
     tuple->streamId = is_s_stream ? 0 : 1;
