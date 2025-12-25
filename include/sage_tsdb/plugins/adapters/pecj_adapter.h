@@ -136,6 +136,16 @@ public:
     void feedStreamR(const TimeSeriesData& data);
     
     /**
+     * @brief Restart PECJ operator for a new window
+     * This resets the operator state and prepares for processing new data.
+     * Used for batch/window-by-window processing mode.
+     * @param window_start Start time of the new window (for normalization)
+     * @param window_len Length of the window in microseconds
+     * @return true if restart successful
+     */
+    bool restartOperator(uint64_t window_start = 0, uint64_t window_len = 0);
+    
+    /**
      * @brief Get exact join result count
      */
     size_t getJoinResult() const;

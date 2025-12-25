@@ -133,36 +133,43 @@ size_t TimeSeriesIndex::binary_search(int64_t timestamp, bool find_upper) const 
         return 0;
     }
     
-    size_t left = 0;
-    size_t right = data_.size() - 1;
-    size_t result = find_upper ? right : 0;
-    
-    while (left <= right) {
-        size_t mid = left + (right - left) / 2;
-        int64_t mid_time = data_[mid].timestamp;
+    if (find_upper) {
+        // Find the last element with timestamp <= target
+        // This is similar to upper_bound - 1
+        size_t left = 0;
+        size_t right = data_.size();
         
-        if (mid_time < timestamp) {
-            left = mid + 1;
-            if (!find_upper) {
-                result = left;
+        while (left < right) {
+            size_t mid = left + (right - left) / 2;
+            if (data_[mid].timestamp <= timestamp) {
+                left = mid + 1;
+            } else {
+                right = mid;
             }
-        } else if (mid_time > timestamp) {
-            if (mid == 0) break;
-            right = mid - 1;
-            if (find_upper) {
-                result = right;
-            }
-        } else {
-            return mid;
         }
+        
+        // left now points to the first element > timestamp
+        // We want the last element <= timestamp, so return left - 1
+        // But if all elements are > timestamp, return 0 (no valid range)
+        return (left > 0) ? (left - 1) : 0;
+    } else {
+        // Find the first element with timestamp >= target
+        // This is lower_bound
+        size_t left = 0;
+        size_t right = data_.size();
+        
+        while (left < right) {
+            size_t mid = left + (right - left) / 2;
+            if (data_[mid].timestamp < timestamp) {
+                left = mid + 1;
+            } else {
+                right = mid;
+            }
+        }
+        
+        // left now points to the first element >= timestamp
+        return left;
     }
-    
-    // Clamp result to valid range
-    if (result >= data_.size()) {
-        result = data_.size() - 1;
-    }
-    
-    return result;
 }
 
 std::vector<size_t> TimeSeriesIndex::filter_by_tags(const Tags& tags) const {

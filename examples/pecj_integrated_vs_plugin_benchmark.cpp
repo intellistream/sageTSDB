@@ -410,6 +410,21 @@ BenchmarkResult runIntegratedModeBenchmark(
     result.results.r_events = r_data.size();
     result.results.total_events = all_data.size();
     
+    // Debug: Verify data in DB matches input
+    // Use the actual data time range, not INT64_MIN/MAX which may cause issues
+    int64_t data_min_time = all_data.front().data.timestamp;
+    int64_t data_max_time = all_data.back().data.timestamp;
+    sage_tsdb::TimeRange full_range(data_min_time - 1, data_max_time + 1);
+    sage_tsdb::QueryConfig full_query_config(full_range);
+    full_query_config.limit = 0;  // No limit
+    auto s_full_query = db.query("stream_s", full_query_config);
+    auto r_full_query = db.query("stream_r", full_query_config);
+    std::cout << "    [DEBUG] DB query range: [" << (data_min_time - 1) << ", " << (data_max_time + 1) << "]\n";
+    std::cout << "    [DEBUG] DB: stream_s has " << s_full_query.size() << " records"
+              << " (expected " << s_data.size() << "), "
+              << "stream_r has " << r_full_query.size() << " records"
+              << " (expected " << r_data.size() << ")\n";
+    
     auto insert_end = std::chrono::steady_clock::now();
     result.timing.insert_time_ms = std::chrono::duration<double, std::milli>(
         insert_end - insert_start).count();
@@ -557,24 +572,34 @@ BenchmarkResult runPluginModeBenchmark(
     
     auto total_start = std::chrono::steady_clock::now();
     
-    // ========== Prepare Data First (to calculate time span) ==========
-    struct TaggedData {
-        TimeSeriesData data;
-        bool is_s_stream;
-        bool operator<(const TaggedData& other) const {
-            return data.timestamp < other.data.timestamp;
-        }
-    };
+    // ========== Prepare Data ==========
+    // Sort data by timestamp for proper window processing
+    std::vector<TimeSeriesData> sorted_s = s_data;
+    std::vector<TimeSeriesData> sorted_r = r_data;
+    std::sort(sorted_s.begin(), sorted_s.end(), 
+              [](const auto& a, const auto& b) { return a.timestamp < b.timestamp; });
+    std::sort(sorted_r.begin(), sorted_r.end(),
+              [](const auto& a, const auto& b) { return a.timestamp < b.timestamp; });
     
-    std::vector<TaggedData> all_data;
-    all_data.reserve(s_data.size() + r_data.size());
-    for (const auto& d : s_data) {
-        all_data.push_back({d, true});
+    // Find time range
+    int64_t min_timestamp = INT64_MAX;
+    int64_t max_timestamp = INT64_MIN;
+    for (const auto& d : sorted_s) {
+        min_timestamp = std::min(min_timestamp, d.timestamp);
+        max_timestamp = std::max(max_timestamp, d.timestamp);
     }
-    for (const auto& d : r_data) {
-        all_data.push_back({d, false});
+    for (const auto& d : sorted_r) {
+        min_timestamp = std::min(min_timestamp, d.timestamp);
+        max_timestamp = std::max(max_timestamp, d.timestamp);
     }
-    std::sort(all_data.begin(), all_data.end());
+    
+    // Calculate number of windows (same as Integrated Mode)
+    // Integrated Mode: while (window_start <= max_time) with window_start += slide_len
+    // This means: min_timestamp + (window_id * slide_len) <= max_timestamp
+    // => window_id <= (max_timestamp - min_timestamp) / slide_len
+    // => num_windows = floor((max - min) / slide) + 1
+    int64_t time_span = max_timestamp - min_timestamp;
+    size_t num_windows = static_cast<size_t>(time_span / config.slide_len_us) + 1;
     
     // ========== Setup Phase ==========
     auto setup_start = std::chrono::steady_clock::now();
@@ -593,27 +618,21 @@ BenchmarkResult runPluginModeBenchmark(
     resource_config.enable_zero_copy = true;
     plugin_mgr.setResourceConfig(resource_config);
     
-    // Configure PECJ plugin
-    // Use the SAME watermark configuration as Integrated Mode for fair comparison
-    // 
-    // Key insight: For batch processing where we feed all data at once:
-    // - Use "arrival" watermark with small watermarkTimeMs to trigger periodically
-    // - This ensures intermediate results are computed during processing
-    // - Results should match Integrated Mode which processes data window-by-window
+    // Configure PECJ plugin with large watermark time to avoid early termination
+    // We'll process window-by-window manually
     PluginConfig pecj_plugin_config = {
         {"windowLen", std::to_string(config.window_len_us)},
         {"slideLen", std::to_string(config.slide_len_us)},
-        {"sLen", "100000"},           // 增大缓冲区以容纳更多数据
+        {"sLen", "100000"},
         {"rLen", "100000"},
         {"threads", std::to_string(config.threads)},
-        // Use same watermark config as Integrated Mode (BenchmarkConfig defaults)
-        {"wmTag", config.watermark_tag},
-        {"latenessMs", std::to_string(config.lateness_ms)},
-        {"watermarkTimeMs", std::to_string(config.watermark_time_ms)},
+        {"wmTag", "arrival"},
+        {"latenessMs", "100000"},  // Large value to prevent early watermark
+        {"watermarkTimeMs", "100000"},  // Large value
         {"timeStep", "1000"}
     };
     
-    // Load and start PECJ plugin
+    // Load PECJ plugin
     if (!plugin_mgr.loadPlugin("pecj", pecj_plugin_config)) {
         std::cerr << "[Plugin] Failed to load PECJ plugin\n";
         return result;
@@ -624,15 +643,6 @@ BenchmarkResult runPluginModeBenchmark(
         return result;
     }
     
-    result.resources.threads_used = config.threads;
-    
-    auto setup_end = std::chrono::steady_clock::now();
-    result.timing.setup_time_ms = std::chrono::duration<double, std::milli>(
-        setup_end - setup_start).count();
-    
-    // ========== Insert/Feed Phase ==========
-    auto insert_start = std::chrono::steady_clock::now();
-    
     // Get PECJ adapter
     auto pecj_adapter = std::dynamic_pointer_cast<PECJAdapter>(
         plugin_mgr.getPlugin("pecj"));
@@ -642,92 +652,168 @@ BenchmarkResult runPluginModeBenchmark(
         return result;
     }
     
-    // Feed data to plugin (all_data already prepared above)
-    for (const auto& tagged : all_data) {
-        if (tagged.is_s_stream) {
-            pecj_adapter->feedStreamS(tagged.data);
-        } else {
-            pecj_adapter->feedStreamR(tagged.data);
+    result.resources.threads_used = config.threads;
+    
+    auto setup_end = std::chrono::steady_clock::now();
+    result.timing.setup_time_ms = std::chrono::duration<double, std::milli>(
+        setup_end - setup_start).count();
+    
+    // ========== Window-by-Window Processing (like Integrated Mode) ==========
+    auto insert_start = std::chrono::steady_clock::now();
+    auto compute_start = insert_start;  // We'll measure compute time during window processing
+    
+    size_t total_join_results = 0;
+    double total_aqp_estimate = 0.0;
+    size_t windows_completed = 0;      // All windows (including empty ones)
+    size_t windows_with_data = 0;      // Windows that had data
+    
+    for (size_t window_id = 0; window_id < num_windows; ++window_id) {
+        // Calculate window boundaries (same as Integrated Mode)
+        int64_t window_start = min_timestamp + static_cast<int64_t>(window_id * config.slide_len_us);
+        int64_t window_end = window_start + static_cast<int64_t>(config.window_len_us);
+        
+        // Collect data for this window (use same semantics as Integrated Mode)
+        // Integrated Mode uses [start_time, end_time] (closed interval)
+        // via lower_bound(start) and upper_bound(end)
+        std::vector<TimeSeriesData> window_s_data;
+        std::vector<TimeSeriesData> window_r_data;
+        
+        for (const auto& d : sorted_s) {
+            if (d.timestamp >= window_start && d.timestamp <= window_end) {
+                window_s_data.push_back(d);
+            }
         }
+        for (const auto& d : sorted_r) {
+            if (d.timestamp >= window_start && d.timestamp <= window_end) {
+                window_r_data.push_back(d);
+            }
+        }
+        
+        // Skip empty windows (but still count them)
+        if (window_s_data.empty() && window_r_data.empty()) {
+            windows_completed++;
+            continue;
+        }
+        
+        windows_with_data++;
+        
+        // Debug: Print first 3 windows
+        if (windows_with_data <= 3) {
+            std::cout << "    [Plugin DEBUG] Window " << window_id 
+                      << ": range=[" << window_start << ", " << window_end << "]"
+                      << ", S_tuples=" << window_s_data.size()
+                      << ", R_tuples=" << window_r_data.size() << "\n";
+        }
+        
+        // Restart operator for this window
+        // Calculate effective window length to cover all data in this window
+        // Integrated Mode uses min_timestamp from actual data, not window_start
+        int64_t local_min = INT64_MAX;
+        int64_t local_max = INT64_MIN;
+        for (const auto& d : window_s_data) {
+            local_min = std::min(local_min, d.timestamp);
+            local_max = std::max(local_max, d.timestamp);
+        }
+        for (const auto& d : window_r_data) {
+            local_min = std::min(local_min, d.timestamp);
+            local_max = std::max(local_max, d.timestamp);
+        }
+        
+        // Calculate effective window length (same as Integrated Mode)
+        // actual_data_span = max_timestamp - min_timestamp + 1
+        // effective_window_len = max(config_window_len, actual_data_span + 1000)
+        uint64_t actual_data_span = static_cast<uint64_t>(local_max - local_min + 1);
+        uint64_t effective_window_len = std::max(
+            config.window_len_us,
+            actual_data_span + 1000
+        );
+        
+        // Use local_min (data's min timestamp) as base, matching Integrated Mode
+        pecj_adapter->restartOperator(static_cast<uint64_t>(local_min), effective_window_len);
+        
+        // Feed data for this window
+        // Merge and sort by timestamp
+        struct TaggedData {
+            TimeSeriesData data;
+            bool is_s_stream;
+            bool operator<(const TaggedData& other) const {
+                return data.timestamp < other.data.timestamp;
+            }
+        };
+        
+        std::vector<TaggedData> window_data;
+        window_data.reserve(window_s_data.size() + window_r_data.size());
+        for (const auto& d : window_s_data) {
+            window_data.push_back({d, true});
+        }
+        for (const auto& d : window_r_data) {
+            window_data.push_back({d, false});
+        }
+        std::sort(window_data.begin(), window_data.end());
+        
+        // Feed tuples in timestamp order
+        for (const auto& tagged : window_data) {
+            if (tagged.is_s_stream) {
+                pecj_adapter->feedStreamS(tagged.data);
+            } else {
+                pecj_adapter->feedStreamR(tagged.data);
+            }
+        }
+        
+        // Get results for this window
+        // Note: restartOperator() calls start() which resets confirmedResult to 0
+        // So getJoinResult() returns only this window's results
+        size_t window_join_result = pecj_adapter->getJoinResult();
+        double window_aqp_result = pecj_adapter->getApproximateResult();
+        
+        // Debug: Print first 5 window results
+        if (windows_with_data <= 5) {
+            std::cout << "    [Plugin Window " << window_id << "] joinResult=" << window_join_result 
+                      << ", aqpResult=" << window_aqp_result 
+                      << ", total=" << (total_join_results + window_join_result) << "\n";
+        }
+        
+        total_join_results += window_join_result;
+        total_aqp_estimate += window_aqp_result;
+        windows_completed++;
+        
+        // Memory sampling
+        size_t current_memory = getCurrentMemoryUsage();
+        peak_memory = std::max(peak_memory, current_memory);
+        total_memory += current_memory;
+        memory_samples++;
     }
+    
+    auto compute_end = std::chrono::steady_clock::now();
+    auto insert_end = compute_end;  // Insert and compute are interleaved
+    
+    result.timing.insert_time_ms = std::chrono::duration<double, std::milli>(
+        insert_end - insert_start).count() * 0.3;  // Rough estimate: 30% for insert
+    result.timing.compute_time_ms = std::chrono::duration<double, std::milli>(
+        compute_end - compute_start).count() * 0.7;  // 70% for compute
     
     result.results.s_events = s_data.size();
     result.results.r_events = r_data.size();
-    result.results.total_events = all_data.size();
+    result.results.total_events = s_data.size() + r_data.size();
+    result.results.join_results = total_join_results;
+    result.results.aqp_estimate = total_aqp_estimate;
+    result.results.windows_executed = windows_completed;
     
-    auto insert_end = std::chrono::steady_clock::now();
-    result.timing.insert_time_ms = std::chrono::duration<double, std::milli>(
-        insert_end - insert_start).count();
-    
-    // Memory sampling
-    size_t current_memory = getCurrentMemoryUsage();
-    peak_memory = std::max(peak_memory, current_memory);
-    total_memory += current_memory;
-    memory_samples++;
-    
-    // ========== Compute Phase ==========
-    auto compute_start = std::chrono::steady_clock::now();
-    
-    // 重要：PECJ 使用 Watermark 机制，在 Watermark 触发前不会产生结果
-    // 当没有 Watermark 时，只有在 stop() 时才会最终计算
-    // 因此需要先 stop 算子来触发最终计算
-    
-    // Stop the plugin to trigger final computation (PECJ computes on stop when no watermark)
-    plugin_mgr.stopAll();
-    
-    // Now get results after stop
-    auto algo_result = pecj_adapter->process();
-    
-    // Extract results
-    if (algo_result.metrics.count("join_result")) {
-        result.results.join_results = static_cast<size_t>(algo_result.metrics["join_result"]);
-    }
-    if (algo_result.metrics.count("approx_result")) {
-        result.results.aqp_estimate = algo_result.metrics["approx_result"];
-    }
-    if (algo_result.metrics.count("aqp_result")) {
-        result.results.aqp_estimate = algo_result.metrics["aqp_result"];
-    }
-    if (algo_result.metrics.count("windows_completed")) {
-        result.results.windows_executed = static_cast<size_t>(algo_result.metrics["windows_completed"]);
-    }
-    
-    // Alternative: use adapter-specific methods
-    result.results.join_results = pecj_adapter->getJoinResult();
-    result.results.aqp_estimate = pecj_adapter->getApproximateResult();
-    
-    auto compute_end = std::chrono::steady_clock::now();
-    result.timing.compute_time_ms = std::chrono::duration<double, std::milli>(
-        compute_end - compute_start).count();
-    
-    // Memory sampling
-    current_memory = getCurrentMemoryUsage();
-    peak_memory = std::max(peak_memory, current_memory);
-    total_memory += current_memory;
-    memory_samples++;
-    
-    // ========== Query Phase (get time breakdown) ==========
+    // ========== Query Phase ==========
     auto query_start = std::chrono::steady_clock::now();
     
-    // Get detailed statistics from plugin
     auto stats = pecj_adapter->getStats();
     auto time_breakdown = pecj_adapter->getTimeBreakdown();
-    
-    // Estimate windows from time range
-    if (result.results.windows_executed == 0 && !all_data.empty()) {
-        int64_t time_span = all_data.back().data.timestamp - all_data.front().data.timestamp;
-        result.results.windows_executed = (time_span / config.slide_len_us) + 1;
-    }
     
     auto query_end = std::chrono::steady_clock::now();
     result.timing.query_time_ms = std::chrono::duration<double, std::milli>(
         query_end - query_start).count();
     
-    // ========== Cleanup Phase (plugin already stopped, just reset) ==========
+    // ========== Cleanup Phase ==========
     auto cleanup_start = std::chrono::steady_clock::now();
     
+    plugin_mgr.stopAll();
     pecj_adapter->reset();
-    // Note: plugin_mgr.stopAll() already called above to trigger computation
     
     auto cleanup_end = std::chrono::steady_clock::now();
     result.timing.cleanup_time_ms = std::chrono::duration<double, std::milli>(

@@ -300,6 +300,49 @@ void PECJAdapter::reset() {
     }
 }
 
+bool PECJAdapter::restartOperator(uint64_t window_start, uint64_t window_len) {
+#ifdef PECJ_FULL_INTEGRATION
+    if (!pecj_operator_) {
+        std::cerr << "PECJ operator not initialized" << std::endl;
+        return false;
+    }
+    
+    // Stop current operator to get any remaining results
+    pecj_operator_->stop();
+    
+    // Reset statistics
+    tuples_processed_s_.store(0);
+    tuples_processed_r_.store(0);
+    total_latency_us_.store(0);
+    
+    // Reset timestamp normalization for new window
+    min_timestamp_ = window_start;
+    
+    // Update window configuration if provided
+    if (window_len > 0) {
+        window_config_.window_len_us = window_len;
+        pecj_config_->edit("windowLen", static_cast<uint64_t>(window_len));
+    }
+    
+    // Re-configure operator with updated settings
+    pecj_operator_->setConfig(pecj_config_);
+    pecj_operator_->setWindow(window_config_.window_len_us, window_config_.slide_len_us);
+    pecj_operator_->setBufferLen(window_config_.s_buffer_len, window_config_.r_buffer_len);
+    
+    // Restart operator
+    if (!pecj_operator_->start()) {
+        std::cerr << "Failed to restart PECJ operator" << std::endl;
+        return false;
+    }
+    
+    return true;
+#else
+    (void)window_start;
+    (void)window_len;
+    return true;
+#endif
+}
+
 // ============================================================================
 // Data Feeding
 // ============================================================================
