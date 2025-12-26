@@ -116,10 +116,27 @@ void TimeSeriesIndex::ensure_sorted() {
     std::unique_lock<std::shared_mutex> lock(mutex_);
     
     if (!sorted_) {
-        // Sort data by timestamp
-        std::sort(data_.begin(), data_.end(),
+        // Sort data by timestamp, then by key for deterministic ordering
+        // Use stable_sort to maintain relative order of equal elements
+        std::stable_sort(data_.begin(), data_.end(),
                  [](const TimeSeriesData& a, const TimeSeriesData& b) {
-                     return a.timestamp < b.timestamp;
+                     // Primary sort by timestamp
+                     if (a.timestamp != b.timestamp) {
+                         return a.timestamp < b.timestamp;
+                     }
+                     // Secondary sort by key for deterministic ordering
+                     uint64_t key_a = 0, key_b = 0;
+                     if (a.tags.find("key") != a.tags.end()) {
+                         try {
+                             key_a = std::stoull(a.tags.at("key"));
+                         } catch (...) {}
+                     }
+                     if (b.tags.find("key") != b.tags.end()) {
+                         try {
+                             key_b = std::stoull(b.tags.at("key"));
+                         } catch (...) {}
+                     }
+                     return key_a < key_b;
                  });
         
         // Rebuild tag index

@@ -430,31 +430,30 @@ ComputeStatus PECJComputeEngine::executeWindowJoin(uint64_t window_id,
         std::cout << "    [DEBUG] Fed " << r_fed << " R tuples\n";
         
         // Step 3: Get join results BEFORE stopping (stop() may clear state)
-        // Use getAQPResult() to get results with prediction compensation (for IMA operator)
-        // For SHJ, getAQPResult() returns the same as getResult()
-        size_t join_count_after = pecj_operator_->getAQPResult();
-        status.join_count = join_count_after - join_count_before;
+        // Get both confirmed result and AQP result for comparison
+        size_t confirmed_result = pecj_operator_->getResult();
+        size_t aqp_result = pecj_operator_->getAQPResult();
+        status.join_count = aqp_result - join_count_before;
         
         // Step 3.5: Get AQP result if operator supports it
         PECJOperatorType op_type = stringToOperatorType(config_.operator_type);
         if (operatorSupportsAQP(op_type)) {
-            size_t aqp_result = pecj_operator_->getAQPResult();
             status.aqp_estimate = static_cast<double>(aqp_result);
             status.used_aqp = true;
             
             // Calculate AQP error
-            if (status.join_count > 0) {
-                status.aqp_error = std::abs(static_cast<double>(status.join_count) - status.aqp_estimate) 
-                                 / static_cast<double>(status.join_count);
+            if (confirmed_result > 0) {
+                status.aqp_error = std::abs(static_cast<double>(confirmed_result) - status.aqp_estimate) 
+                                 / static_cast<double>(confirmed_result);
             }
             
-            std::cout << "    [DEBUG] AQP result: " << aqp_result 
-                      << ", error: " << (status.aqp_error * 100.0) << "%\n";
+            std::cout << "    [DEBUG] confirmed=" << confirmed_result 
+                      << ", AQP=" << aqp_result << "\n";
         }
         
         // Debug: Print join results
         std::cout << "    [DEBUG] Join results: before=" << join_count_before 
-                  << ", after=" << join_count_after 
+                  << ", after=" << aqp_result 
                   << ", delta=" << status.join_count << "\n";
         
         // Step 4: Stop operator after getting results

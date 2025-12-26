@@ -319,17 +319,24 @@ bool PECJAdapter::restartOperator(uint64_t window_start, uint64_t window_len) {
     min_timestamp_ = window_start;
     
     // Update window configuration if provided
+    // Note: Don't call setConfig() every time as it recreates the watermark generator
+    // which causes state inconsistency. Only update window parameters.
     if (window_len > 0) {
         window_config_.window_len_us = window_len;
+        // Update config for watermark settings, but don't reinitialize operator
         pecj_config_->edit("windowLen", static_cast<uint64_t>(window_len));
     }
     
-    // Re-configure operator with updated settings
-    pecj_operator_->setConfig(pecj_config_);
+    // Match Integrated Mode's initialization order exactly:
+    // 1. setWindow() - configure window parameters
     pecj_operator_->setWindow(window_config_.window_len_us, window_config_.slide_len_us);
-    pecj_operator_->setBufferLen(window_config_.s_buffer_len, window_config_.r_buffer_len);
     
-    // Restart operator
+    // 2. syncTimeStruct() - synchronize time reference (before start())
+    struct timeval tv;
+    gettimeofday(&tv, nullptr);
+    pecj_operator_->syncTimeStruct(tv);
+    
+    // 3. start() - resets intermediateResult/confirmedResult to 0, creates new state tables
     if (!pecj_operator_->start()) {
         std::cerr << "Failed to restart PECJ operator" << std::endl;
         return false;
@@ -434,8 +441,19 @@ std::shared_ptr<OoOJoin::TrackTuple> PECJAdapter::convertToTrackTuple(
         }
     }
     
-    // Get value
-    uint64_t value = static_cast<uint64_t>(data.as_double());
+    // Get value - CRITICAL FIX: Match Integrated Mode which uses fields["value"]
+    // Instead of data.as_double() which reads from variant (often unset)
+    uint64_t value = 0;
+    if (data.fields.find("value") != data.fields.end()) {
+        try {
+            value = static_cast<uint64_t>(std::stod(data.fields.at("value")));
+        } catch (...) {
+            value = 0;
+        }
+    } else {
+        // Fallback to as_double() for backward compatibility
+        value = static_cast<uint64_t>(data.as_double());
+    }
     
     // Create TrackTuple
     auto tuple = std::make_shared<OoOJoin::TrackTuple>(key, value);

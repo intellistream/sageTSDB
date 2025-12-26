@@ -89,9 +89,11 @@ struct BenchmarkConfig {
     uint64_t max_memory_mb = 1024;    // 1GB
     
     // Watermark configuration
+    // Use large values to let the window complete fully before watermark triggers
+    // Both modes should use the same watermark configuration
     std::string watermark_tag = "arrival";
-    uint64_t watermark_time_ms = 10;
-    uint64_t lateness_ms = 5;
+    uint64_t watermark_time_ms = 100000;  // Large value for manual window control
+    uint64_t lateness_ms = 100000;         // Large value for manual window control
     
     // Operator type
     std::string operator_type = "IMA";
@@ -378,24 +380,40 @@ BenchmarkResult runIntegratedModeBenchmark(
     // ========== Insert Phase ==========
     auto insert_start = std::chrono::steady_clock::now();
     
-    // Merge and sort data by timestamp
+    // Merge and sort data by timestamp, then by key for deterministic ordering
     struct TaggedData {
         TimeSeriesData data;
         bool is_s_stream;
+        uint64_t key;  // Secondary sort key for deterministic ordering
+        
         bool operator<(const TaggedData& other) const {
-            return data.timestamp < other.data.timestamp;
+            // Primary sort by timestamp
+            if (data.timestamp != other.data.timestamp) {
+                return data.timestamp < other.data.timestamp;
+            }
+            // Secondary sort by key for deterministic ordering
+            return key < other.key;
         }
     };
     
     std::vector<TaggedData> all_data;
     all_data.reserve(s_data.size() + r_data.size());
     for (const auto& d : s_data) {
-        all_data.push_back({d, true});
+        uint64_t key = 0;
+        if (d.tags.find("key") != d.tags.end()) {
+            key = std::stoull(d.tags.at("key"));
+        }
+        all_data.push_back({d, true, key});
     }
     for (const auto& d : r_data) {
-        all_data.push_back({d, false});
+        uint64_t key = 0;
+        if (d.tags.find("key") != d.tags.end()) {
+            key = std::stoull(d.tags.at("key"));
+        }
+        all_data.push_back({d, false, key});
     }
-    std::sort(all_data.begin(), all_data.end());
+    // Use stable_sort for deterministic ordering of equal elements
+    std::stable_sort(all_data.begin(), all_data.end());
     
     // Insert into tables
     for (const auto& tagged : all_data) {
@@ -409,21 +427,6 @@ BenchmarkResult runIntegratedModeBenchmark(
     result.results.s_events = s_data.size();
     result.results.r_events = r_data.size();
     result.results.total_events = all_data.size();
-    
-    // Debug: Verify data in DB matches input
-    // Use the actual data time range, not INT64_MIN/MAX which may cause issues
-    int64_t data_min_time = all_data.front().data.timestamp;
-    int64_t data_max_time = all_data.back().data.timestamp;
-    sage_tsdb::TimeRange full_range(data_min_time - 1, data_max_time + 1);
-    sage_tsdb::QueryConfig full_query_config(full_range);
-    full_query_config.limit = 0;  // No limit
-    auto s_full_query = db.query("stream_s", full_query_config);
-    auto r_full_query = db.query("stream_r", full_query_config);
-    std::cout << "    [DEBUG] DB query range: [" << (data_min_time - 1) << ", " << (data_max_time + 1) << "]\n";
-    std::cout << "    [DEBUG] DB: stream_s has " << s_full_query.size() << " records"
-              << " (expected " << s_data.size() << "), "
-              << "stream_r has " << r_full_query.size() << " records"
-              << " (expected " << r_data.size() << ")\n";
     
     auto insert_end = std::chrono::steady_clock::now();
     result.timing.insert_time_ms = std::chrono::duration<double, std::milli>(
@@ -573,13 +576,29 @@ BenchmarkResult runPluginModeBenchmark(
     auto total_start = std::chrono::steady_clock::now();
     
     // ========== Prepare Data ==========
-    // Sort data by timestamp for proper window processing
+    // Sort data by timestamp, then by key for deterministic ordering
+    // This matches the sorting used in Integrated Mode
+    auto sortComparator = [](const TimeSeriesData& a, const TimeSeriesData& b) {
+        // Primary sort by timestamp
+        if (a.timestamp != b.timestamp) {
+            return a.timestamp < b.timestamp;
+        }
+        // Secondary sort by key for deterministic ordering
+        uint64_t key_a = 0, key_b = 0;
+        if (a.tags.find("key") != a.tags.end()) {
+            key_a = std::stoull(a.tags.at("key"));
+        }
+        if (b.tags.find("key") != b.tags.end()) {
+            key_b = std::stoull(b.tags.at("key"));
+        }
+        return key_a < key_b;
+    };
+    
     std::vector<TimeSeriesData> sorted_s = s_data;
     std::vector<TimeSeriesData> sorted_r = r_data;
-    std::sort(sorted_s.begin(), sorted_s.end(), 
-              [](const auto& a, const auto& b) { return a.timestamp < b.timestamp; });
-    std::sort(sorted_r.begin(), sorted_r.end(),
-              [](const auto& a, const auto& b) { return a.timestamp < b.timestamp; });
+    // Use stable_sort for deterministic ordering of equal elements
+    std::stable_sort(sorted_s.begin(), sorted_s.end(), sortComparator);
+    std::stable_sort(sorted_r.begin(), sorted_r.end(), sortComparator);
     
     // Find time range
     int64_t min_timestamp = INT64_MAX;
@@ -731,46 +750,61 @@ BenchmarkResult runPluginModeBenchmark(
         // Use local_min (data's min timestamp) as base, matching Integrated Mode
         pecj_adapter->restartOperator(static_cast<uint64_t>(local_min), effective_window_len);
         
-        // Feed data for this window
-        // Merge and sort by timestamp
-        struct TaggedData {
-            TimeSeriesData data;
-            bool is_s_stream;
-            bool operator<(const TaggedData& other) const {
-                return data.timestamp < other.data.timestamp;
-            }
-        };
+        // Debug first window
+        if (windows_with_data <= 3) {
+            std::cout << "    [Plugin DEBUG] local_min=" << local_min 
+                      << ", local_max=" << local_max
+                      << ", effective_window_len=" << effective_window_len << "\n";
+        }
         
-        std::vector<TaggedData> window_data;
-        window_data.reserve(window_s_data.size() + window_r_data.size());
+        // Feed data for this window - SAME ORDER AS INTEGRATED MODE
+        // Integrated Mode feeds ALL S tuples first, then ALL R tuples
+        // This is important for PECJ's IMA operator which may be order-sensitive
+        
+        // Feed all S tuples first
+        size_t s_fed = 0;
         for (const auto& d : window_s_data) {
-            window_data.push_back({d, true});
+            pecj_adapter->feedStreamS(d);
+            s_fed++;
+            // Debug: Print first few tuples for Window 0
+            if (windows_with_data == 1 && s_fed <= 5) {
+                uint64_t key = 0;
+                if (d.tags.find("key") != d.tags.end()) {
+                    key = std::stoull(d.tags.at("key"));
+                }
+                std::cout << "    [Plugin] Fed S tuple: key=" << key 
+                          << ", ts=" << d.timestamp << "\n";
+            }
         }
-        for (const auto& d : window_r_data) {
-            window_data.push_back({d, false});
-        }
-        std::sort(window_data.begin(), window_data.end());
         
-        // Feed tuples in timestamp order
-        for (const auto& tagged : window_data) {
-            if (tagged.is_s_stream) {
-                pecj_adapter->feedStreamS(tagged.data);
-            } else {
-                pecj_adapter->feedStreamR(tagged.data);
+        // Then feed all R tuples
+        size_t r_fed = 0;
+        for (const auto& d : window_r_data) {
+            pecj_adapter->feedStreamR(d);
+            r_fed++;
+            // Debug: Print first few tuples for Window 0
+            if (windows_with_data == 1 && r_fed <= 5) {
+                uint64_t key = 0;
+                if (d.tags.find("key") != d.tags.end()) {
+                    key = std::stoull(d.tags.at("key"));
+                }
+                std::cout << "    [Plugin] Fed R tuple: key=" << key 
+                          << ", ts=" << d.timestamp << "\n";
             }
         }
         
         // Get results for this window
         // Note: restartOperator() calls start() which resets confirmedResult to 0
-        // So getJoinResult() returns only this window's results
-        size_t window_join_result = pecj_adapter->getJoinResult();
+        // Get both confirmed result (getJoinResult) and AQP result (getApproximateResult)
+        size_t window_confirmed_result = pecj_adapter->getJoinResult();
         double window_aqp_result = pecj_adapter->getApproximateResult();
+        size_t window_join_result = static_cast<size_t>(window_aqp_result);
         
-        // Debug: Print first 5 window results
+        // Debug: Print result for first 5 windows
         if (windows_with_data <= 5) {
-            std::cout << "    [Plugin Window " << window_id << "] joinResult=" << window_join_result 
-                      << ", aqpResult=" << window_aqp_result 
-                      << ", total=" << (total_join_results + window_join_result) << "\n";
+            std::cout << "    [Plugin DEBUG] Window " << window_id 
+                      << ": confirmed=" << window_confirmed_result
+                      << ", AQP=" << window_aqp_result << "\n";
         }
         
         total_join_results += window_join_result;
