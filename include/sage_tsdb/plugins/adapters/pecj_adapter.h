@@ -86,8 +86,8 @@ public:
         uint64_t slide_len_us = 500000;      // Slide length in microseconds
         uint64_t lateness_ms = 100;          // Max allowed lateness in ms
         uint64_t time_step_us = 1000;        // Internal time step
-        size_t s_buffer_len = 10000;         // S stream buffer size
-        size_t r_buffer_len = 10000;         // R stream buffer size
+        size_t s_buffer_len = 100000;        // S stream buffer size (match Integrated Mode default)
+        size_t r_buffer_len = 100000;        // R stream buffer size (match Integrated Mode default)
         uint64_t watermark_time_ms = 10;     // Watermark interval in ms (how often to trigger watermark)
         std::string wm_tag = "arrival";      // Watermark strategy: "arrival", "lateness", "period", etc.
     };

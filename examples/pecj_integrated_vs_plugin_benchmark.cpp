@@ -716,14 +716,6 @@ BenchmarkResult runPluginModeBenchmark(
         
         windows_with_data++;
         
-        // Debug: Print first 3 windows
-        if (windows_with_data <= 3) {
-            std::cout << "    [Plugin DEBUG] Window " << window_id 
-                      << ": range=[" << window_start << ", " << window_end << "]"
-                      << ", S_tuples=" << window_s_data.size()
-                      << ", R_tuples=" << window_r_data.size() << "\n";
-        }
-        
         // Restart operator for this window
         // Calculate effective window length to cover all data in this window
         // Integrated Mode uses min_timestamp from actual data, not window_start
@@ -750,62 +742,25 @@ BenchmarkResult runPluginModeBenchmark(
         // Use local_min (data's min timestamp) as base, matching Integrated Mode
         pecj_adapter->restartOperator(static_cast<uint64_t>(local_min), effective_window_len);
         
-        // Debug first window
-        if (windows_with_data <= 3) {
-            std::cout << "    [Plugin DEBUG] local_min=" << local_min 
-                      << ", local_max=" << local_max
-                      << ", effective_window_len=" << effective_window_len << "\n";
-        }
-        
         // Feed data for this window - SAME ORDER AS INTEGRATED MODE
         // Integrated Mode feeds ALL S tuples first, then ALL R tuples
         // This is important for PECJ's IMA operator which may be order-sensitive
         
         // Feed all S tuples first
-        size_t s_fed = 0;
         for (const auto& d : window_s_data) {
             pecj_adapter->feedStreamS(d);
-            s_fed++;
-            // Debug: Print first few tuples for Window 0
-            if (windows_with_data == 1 && s_fed <= 5) {
-                uint64_t key = 0;
-                if (d.tags.find("key") != d.tags.end()) {
-                    key = std::stoull(d.tags.at("key"));
-                }
-                std::cout << "    [Plugin] Fed S tuple: key=" << key 
-                          << ", ts=" << d.timestamp << "\n";
-            }
         }
         
         // Then feed all R tuples
-        size_t r_fed = 0;
         for (const auto& d : window_r_data) {
             pecj_adapter->feedStreamR(d);
-            r_fed++;
-            // Debug: Print first few tuples for Window 0
-            if (windows_with_data == 1 && r_fed <= 5) {
-                uint64_t key = 0;
-                if (d.tags.find("key") != d.tags.end()) {
-                    key = std::stoull(d.tags.at("key"));
-                }
-                std::cout << "    [Plugin] Fed R tuple: key=" << key 
-                          << ", ts=" << d.timestamp << "\n";
-            }
         }
         
         // Get results for this window
         // Note: restartOperator() calls start() which resets confirmedResult to 0
         // Get both confirmed result (getJoinResult) and AQP result (getApproximateResult)
-        size_t window_confirmed_result = pecj_adapter->getJoinResult();
         double window_aqp_result = pecj_adapter->getApproximateResult();
         size_t window_join_result = static_cast<size_t>(window_aqp_result);
-        
-        // Debug: Print result for first 5 windows
-        if (windows_with_data <= 5) {
-            std::cout << "    [Plugin DEBUG] Window " << window_id 
-                      << ": confirmed=" << window_confirmed_result
-                      << ", AQP=" << window_aqp_result << "\n";
-        }
         
         total_join_results += window_join_result;
         total_aqp_estimate += window_aqp_result;
@@ -1192,10 +1147,69 @@ int main(int argc, char** argv) {
     integrated_available = true;
 #endif
     
-    // ========== Run Integrated Mode Benchmark ==========
+    // ========== Run Plugin Mode Benchmark FIRST (to test timing hypothesis) ==========
+    if (plugin_available) {
+        std::cout << "[Running Plugin Mode Benchmark]\n";
+        std::cout << "  Warming up...\n";
+        
+        // Warmup run (discarded)
+        auto warmup = runPluginModeBenchmark(s_data, r_data, config);
+        
+        // Actual runs
+        std::vector<BenchmarkResult> plugin_runs;
+        for (int i = 0; i < config.repeat_count; i++) {
+            std::cout << "  Run " << (i + 1) << "/" << config.repeat_count << "...\n";
+            auto result = runPluginModeBenchmark(s_data, r_data, config);
+            plugin_runs.push_back(result);
+        }
+        
+        // Average the results
+        plugin_result = plugin_runs[0];
+        plugin_result.timing.clear();
+        plugin_result.resources.clear();
+        
+        for (const auto& run : plugin_runs) {
+            plugin_result.timing.total_time_ms += run.timing.total_time_ms;
+            plugin_result.timing.setup_time_ms += run.timing.setup_time_ms;
+            plugin_result.timing.insert_time_ms += run.timing.insert_time_ms;
+            plugin_result.timing.compute_time_ms += run.timing.compute_time_ms;
+            plugin_result.timing.query_time_ms += run.timing.query_time_ms;
+            plugin_result.timing.cleanup_time_ms += run.timing.cleanup_time_ms;
+            plugin_result.resources.peak_memory_bytes = std::max(
+                plugin_result.resources.peak_memory_bytes,
+                run.resources.peak_memory_bytes);
+            plugin_result.resources.cpu_user_ms += run.resources.cpu_user_ms;
+            plugin_result.resources.cpu_system_ms += run.resources.cpu_system_ms;
+            plugin_result.resources.context_switches += run.resources.context_switches;
+        }
+        
+        int n = plugin_runs.size();
+        plugin_result.timing.total_time_ms /= n;
+        plugin_result.timing.setup_time_ms /= n;
+        plugin_result.timing.insert_time_ms /= n;
+        plugin_result.timing.compute_time_ms /= n;
+        plugin_result.timing.query_time_ms /= n;
+        plugin_result.timing.cleanup_time_ms /= n;
+        plugin_result.resources.cpu_user_ms /= n;
+        plugin_result.resources.cpu_system_ms /= n;
+        plugin_result.resources.context_switches /= n;
+        plugin_result.resources.threads_used = config.threads;
+        
+        plugin_result.results = plugin_runs[0].results;
+        plugin_result.calculateDerivedMetrics();
+        
+        if (config.verbose) {
+            plugin_result.print();
+        }
+    } else {
+        std::cout << "[Plugin Mode] Not available\n";
+        plugin_result.mode_name = "Plugin Mode (Not Available)";
+    }
+    
+    // ========== Run Integrated Mode Benchmark SECOND ==========
     if (integrated_available) {
 #ifdef PECJ_MODE_INTEGRATED
-        std::cout << "[Running Integrated Mode Benchmark]\n";
+        std::cout << "\n[Running Integrated Mode Benchmark]\n";
         std::cout << "  Warming up...\n";
         
         // Warmup run (discarded)
@@ -1253,61 +1267,7 @@ int main(int argc, char** argv) {
         integrated_result.mode_name = "Integrated Mode (Not Available)";
     }
     
-    // ========== Run Plugin Mode Benchmark ==========
-    if (plugin_available) {
-        std::cout << "\n[Running Plugin Mode Benchmark]\n";
-        std::cout << "  Warming up...\n";
-        
-        // Warmup run (discarded)
-        auto warmup = runPluginModeBenchmark(s_data, r_data, config);
-        
-        // Actual runs
-        std::vector<BenchmarkResult> plugin_runs;
-        for (int i = 0; i < config.repeat_count; i++) {
-            std::cout << "  Run " << (i + 1) << "/" << config.repeat_count << "...\n";
-            auto result = runPluginModeBenchmark(s_data, r_data, config);
-            plugin_runs.push_back(result);
-        }
-        
-        // Average the results
-        plugin_result = plugin_runs[0];
-        plugin_result.timing.clear();
-        plugin_result.resources.clear();
-        
-        for (const auto& run : plugin_runs) {
-            plugin_result.timing.total_time_ms += run.timing.total_time_ms;
-            plugin_result.timing.setup_time_ms += run.timing.setup_time_ms;
-            plugin_result.timing.insert_time_ms += run.timing.insert_time_ms;
-            plugin_result.timing.compute_time_ms += run.timing.compute_time_ms;
-            plugin_result.timing.query_time_ms += run.timing.query_time_ms;
-            plugin_result.timing.cleanup_time_ms += run.timing.cleanup_time_ms;
-            plugin_result.resources.peak_memory_bytes = std::max(
-                plugin_result.resources.peak_memory_bytes,
-                run.resources.peak_memory_bytes);
-            plugin_result.resources.cpu_user_ms += run.resources.cpu_user_ms;
-            plugin_result.resources.cpu_system_ms += run.resources.cpu_system_ms;
-            plugin_result.resources.context_switches += run.resources.context_switches;
-        }
-        
-        int n = plugin_runs.size();
-        plugin_result.timing.total_time_ms /= n;
-        plugin_result.timing.setup_time_ms /= n;
-        plugin_result.timing.insert_time_ms /= n;
-        plugin_result.timing.compute_time_ms /= n;
-        plugin_result.timing.query_time_ms /= n;
-        plugin_result.timing.cleanup_time_ms /= n;
-        plugin_result.resources.cpu_user_ms /= n;
-        plugin_result.resources.cpu_system_ms /= n;
-        plugin_result.resources.context_switches /= n;
-        plugin_result.resources.threads_used = config.threads;
-        
-        plugin_result.results = plugin_runs[0].results;
-        plugin_result.calculateDerivedMetrics();
-        
-        if (config.verbose) {
-            plugin_result.print();
-        }
-    }
+    // Plugin Mode already run above (before Integrated Mode)
     
     // ========== Print Comparison Report ==========
     if (integrated_available && plugin_available) {
