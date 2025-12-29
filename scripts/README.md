@@ -18,6 +18,7 @@
 - [benchmark_disorder.sh](#benchmark_disordersh) - 乱序性能基准测试
 
 ### 🧪 测试和对比脚本
+- [run_pecj_shj_comparison.sh](#run_pecj_shj_comparisonsh) - PECJ vs SHJ 算法对比 🆕
 - [compare_pecj_modes.sh](#compare_pecj_modessh) - PECJ 集成模式对比
 - [test_lsm_tree.sh](#test_lsm_treesh) - LSM Tree 存储引擎测试
 
@@ -244,6 +245,69 @@ AvgDisorderMs, Windows, JoinResults
 ---
 
 ## 🧪 测试和对比脚本
+
+### run_pecj_shj_comparison.sh
+
+**功能**: 对比 PECJ (IMA) 算法与 SHJ (Symmetric Hash Join) 算法的性能差异
+
+**对应示例**:
+- 🎯 **主要**: `pecj_shj_comparison_demo.cpp` - PECJ vs SHJ 性能对比演示
+
+**用法**:
+```bash
+# 使用默认配置运行
+./scripts/run_pecj_shj_comparison.sh
+
+# 自定义参数运行
+./scripts/run_pecj_shj_comparison.sh --small-count 1000 --large-count 20000 --threads 8
+
+# 重新构建并运行
+./scripts/run_pecj_shj_comparison.sh --build
+
+# 使用自定义数据文件
+./scripts/run_pecj_shj_comparison.sh --s-file /path/to/s.csv --r-file /path/to/r.csv
+```
+
+**参数说明**:
+- `--s-file <path>`: S 流数据文件路径（默认: PECJ 数据集）
+- `--r-file <path>`: R 流数据文件路径（默认: PECJ 数据集）
+- `--small-count <n>`: 小规模测试事件数（默认: 5000）
+- `--large-count <n>`: 大规模测试事件数（默认: 50000）
+- `--threads <n>`: 使用线程数（默认: 4）
+- `--build`: 运行前重新构建
+- `--help`: 显示帮助信息
+
+**测试内容**:
+1. **小规模测试**: 验证功能正确性
+2. **大规模测试**: 比较算法性能
+3. **流模式**: 按 arrivalTime 增量处理
+4. **窗口 Join**: 滑动窗口时间序列 Join
+
+**对比指标**:
+- 插入吞吐量 (events/s)
+- 计算吞吐量 (joins/s)
+- 总体吞吐量 (events/s)
+- Join 结果数量
+- 窗口执行数量
+
+**输出示例**:
+```
+================================================================================
+COMPARISON SUMMARY
+================================================================================
+Small Scale (5000 events):
+  PECJ (IMA) - Total Time: 1464.26 ms, Join Results: 22381, Throughput: 3415 events/s
+  SHJ        - Total Time: 1374.24 ms, Join Results: 21934, Throughput: 3638 events/s
+  Speedup: PECJ is 0.94x slower than SHJ
+================================================================================
+```
+
+**适用场景**:
+- 算法性能对比
+- 流处理引擎评估
+- 技术选型参考
+
+---
 
 ### compare_pecj_modes.sh
 

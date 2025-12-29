@@ -166,6 +166,9 @@ struct ComputeConfig {
     uint64_t watermark_time_ms = 100;     ///< Watermark time for ArrivalWM (ms)
     uint64_t lateness_ms = 50;            ///< Max allowed lateness for LatenessWM (ms)
     
+    // Join result mode
+    bool join_sum = false;                 ///< false=Join Count (count matching pairs), true=Join Sum (count*avg aggregation)
+    
     // IMA/PECJ specific
     bool ima_disable_compensation = false; ///< Disable compensation in IMA (simple eager join)
     

@@ -144,7 +144,9 @@ bool PECJComputeEngine::createPECJOperator() {
         pecj_config->edit("sLen", config_.s_buffer_len);
         pecj_config->edit("rLen", config_.r_buffer_len);
         pecj_config->edit("timeStep", config_.time_step_us);
-        pecj_config->edit("joinSum", static_cast<uint64_t>(1)); // Enable join result counting
+        // joinSum=0: count matching tuple pairs (Join Count)
+        // joinSum=1: compute sum of (count * avg_value) (Join Sum aggregation)
+        pecj_config->edit("joinSum", static_cast<uint64_t>(config_.join_sum ? 1 : 0));
         
         // Set watermark parameters
         pecj_config->edit("wmTag", config_.watermark_tag);

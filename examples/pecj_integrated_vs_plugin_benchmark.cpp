@@ -89,11 +89,12 @@ struct BenchmarkConfig {
     uint64_t max_memory_mb = 1024;    // 1GB
     
     // Watermark configuration
-    // Use large values to let the window complete fully before watermark triggers
-    // Both modes should use the same watermark configuration
+    // Use realistic values for real-time stream processing simulation
+    // watermark_time_ms: How often to advance the watermark (should be small for real-time)
+    // lateness_ms: Maximum allowed lateness for out-of-order events (typically 1-2x window size)
     std::string watermark_tag = "arrival";
-    uint64_t watermark_time_ms = 100000;  // Large value for manual window control
-    uint64_t lateness_ms = 100000;         // Large value for manual window control
+    uint64_t watermark_time_ms = 10;      // 10ms watermark advance interval (realistic for streaming)
+    uint64_t lateness_ms = 20;            // 20ms lateness tolerance (~2x window size in ms)
     
     // Operator type
     std::string operator_type = "IMA";
@@ -364,6 +365,7 @@ BenchmarkResult runIntegratedModeBenchmark(
     pecj_config.watermark_tag = config.watermark_tag;
     pecj_config.watermark_time_ms = config.watermark_time_ms;
     pecj_config.lateness_ms = config.lateness_ms;
+    pecj_config.join_sum=true;
     
     compute::PECJComputeEngine engine;
     if (!engine.initialize(pecj_config, &db, nullptr)) {
@@ -637,17 +639,17 @@ BenchmarkResult runPluginModeBenchmark(
     resource_config.enable_zero_copy = true;
     plugin_mgr.setResourceConfig(resource_config);
     
-    // Configure PECJ plugin with large watermark time to avoid early termination
-    // We'll process window-by-window manually
+    // Configure PECJ plugin with realistic watermark settings for real-time streaming
+    // Using same configuration as Integrated Mode for fair comparison
     PluginConfig pecj_plugin_config = {
         {"windowLen", std::to_string(config.window_len_us)},
         {"slideLen", std::to_string(config.slide_len_us)},
         {"sLen", "100000"},
         {"rLen", "100000"},
         {"threads", std::to_string(config.threads)},
-        {"wmTag", "arrival"},
-        {"latenessMs", "100000"},  // Large value to prevent early watermark
-        {"watermarkTimeMs", "100000"},  // Large value
+        {"wmTag", config.watermark_tag},
+        {"latenessMs", std::to_string(config.lateness_ms)},      // Use config value
+        {"watermarkTimeMs", std::to_string(config.watermark_time_ms)},  // Use config value
         {"timeStep", "1000"}
     };
     

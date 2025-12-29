@@ -96,7 +96,10 @@ struct ExperimentStats {
     size_t total_events = 0;
     
     size_t windows_executed = 0;
-    size_t total_join_results = 0;
+    size_t total_join_results = 0;      // From getAQPResult() - includes prediction for IMA
+    size_t total_confirmed_results = 0; // From getResult() - exact confirmed results
+    double total_aqp_estimate = 0.0;    // AQP estimate value
+    bool used_aqp = false;              // Whether AQP was used
     
     double insert_time_ms = 0.0;
     double compute_time_ms = 0.0;
@@ -111,7 +114,11 @@ struct ExperimentStats {
         std::cout << "  Stream R Events       : " << r_events << "\n";
         std::cout << "  Total Events          : " << total_events << "\n";
         std::cout << "  Windows Executed      : " << windows_executed << "\n";
-        std::cout << "  Total Join Results    : " << total_join_results << "\n";
+        std::cout << "  Total Join Results    : " << total_join_results << " (AQP/Predicted)\n";
+        if (used_aqp && total_aqp_estimate > 0) {
+            std::cout << "  AQP Estimate          : " << std::fixed << std::setprecision(0) 
+                      << total_aqp_estimate << "\n";
+        }
         std::cout << "  Avg Joins/Window      : " 
                   << std::fixed << std::setprecision(2)
                   << (windows_executed > 0 ? (double)total_join_results / windows_executed : 0.0) << "\n";
@@ -191,6 +198,10 @@ ExperimentStats runSingleExperiment(
     pecj_config.stream_s_table = "stream_s";
     pecj_config.stream_r_table = "stream_r";
     pecj_config.result_table = "join_results";
+    
+    // Join result mode: false=Join Count (count matching pairs), true=Join Sum (count*avg aggregation)
+    // For fair comparison between IMA and SHJ, use Join Count mode
+    pecj_config.join_sum = false;
     
     // Watermark 配置：使用合理的值模拟真实流处理场景
     // - watermark_tag: "arrival" 表示使用到达时间生成 watermark
@@ -432,7 +443,11 @@ ExperimentStats runSingleExperiment(
             
             if (status.success) {
                 stats.windows_executed++;
-                stats.total_join_results += status.join_count;
+                stats.total_join_results += status.join_count;  // AQP result (from getAQPResult)
+                stats.total_aqp_estimate += status.aqp_estimate;
+                if (status.used_aqp) {
+                    stats.used_aqp = true;
+                }
             }
             
             // 滑动窗口
@@ -463,7 +478,9 @@ ExperimentStats runSingleExperiment(
         
         if (status.success) {
             stats.windows_executed = 1;
-            stats.total_join_results = status.join_count;
+            stats.total_join_results = status.join_count;  // AQP result
+            stats.total_aqp_estimate = status.aqp_estimate;
+            stats.used_aqp = status.used_aqp;
         }
     }
     
@@ -473,7 +490,7 @@ ExperimentStats runSingleExperiment(
     
     if (config.verbose) {
         std::cout << "  Join results: " << stats.total_join_results 
-                  << ", computation time: " << std::fixed << std::setprecision(2) 
+                  << " (AQP), computation time: " << std::fixed << std::setprecision(2) 
                   << stats.compute_time_ms << " ms\n";
     }
     
