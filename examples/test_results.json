@@ -1,0 +1,72 @@
+{
+  "benchmark_info": {
+    "event_count": 20000,
+    "threads": 4,
+    "window_len_us": 10000,
+    "slide_len_us": 5000,
+    "operator_type": "IMA",
+    "repeat_count": 3
+  },
+  "integrated_mode": {
+    "mode_name": "Integrated Mode (PECJComputeEngine)",
+    "timing": {
+      "total_time_ms": 3273.64,
+      "setup_time_ms": 0.5,
+      "insert_time_ms": 30.73,
+      "compute_time_ms": 3242.26,
+      "query_time_ms": 0.01,
+      "cleanup_time_ms": 0.0
+    },
+    "resources": {
+      "peak_memory_mb": 0.88,
+      "avg_memory_mb": 0.0,
+      "threads_used": 4,
+      "cpu_user_ms": 3490.12,
+      "cpu_system_ms": 81.42,
+      "context_switches": 10
+    },
+    "results": {
+      "s_events": 10000,
+      "r_events": 10000,
+      "total_events": 20000,
+      "windows_executed": 387,
+      "join_results": 13856,
+      "aqp_estimate": 13856.0
+    },
+    "throughput": {
+      "events_per_sec": 6109,
+      "joins_per_sec": 4274
+    }
+  },
+  "plugin_mode": {
+    "mode_name": "Plugin Mode (PECJAdapter)",
+    "timing": {
+      "total_time_ms": 1678.31,
+      "setup_time_ms": 0.96,
+      "insert_time_ms": 489.77,
+      "compute_time_ms": 1142.79,
+      "query_time_ms": 0.03,
+      "cleanup_time_ms": 0.31
+    },
+    "resources": {
+      "peak_memory_mb": 0.12,
+      "avg_memory_mb": 0.0,
+      "threads_used": 4,
+      "cpu_user_ms": 1801.02,
+      "cpu_system_ms": 55.38,
+      "context_switches": 68
+    },
+    "results": {
+      "s_events": 10000,
+      "r_events": 10000,
+      "total_events": 20000,
+      "windows_executed": 387,
+      "join_results": 13856,
+      "aqp_estimate": 13856.0
+    },
+    "throughput": {
+      "events_per_sec": 11917,
+      "joins_per_sec": 12125
+    }
+  }
+}

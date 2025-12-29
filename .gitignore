@@ -3,6 +3,7 @@ build/
 build_stub/
 build_integrated/
 build_window_scheduler/
+build_plugin/
 cmake-build-debug/
 cmake-build-release/
 
