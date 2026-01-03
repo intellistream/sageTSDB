@@ -11,7 +11,12 @@ add_compile_definitions(_GLIBCXX_USE_CXX11_ABI=0)
 
 # Options
 option(BUILD_TESTS "Build tests" ON)
-option(BUILD_PYTHON_BINDINGS "Build Python bindings" OFF)
+# Auto-enable Python bindings for wheel builds
+if(DEFINED SKBUILD)
+    set(BUILD_PYTHON_BINDINGS ON CACHE BOOL "Build Python bindings" FORCE)
+else()
+    option(BUILD_PYTHON_BINDINGS "Build Python bindings" OFF)
+endif()
 option(BUILD_SHARED_LIBS "Build shared libraries" ON)
 option(ENABLE_OPENMP "Enable OpenMP support" ON)
 
