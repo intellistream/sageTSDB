@@ -51,6 +51,7 @@ wheel.packages = ["python"]
 provider = "scikit_build_core.metadata.regex"
 input = "python/_version.py"
 regex = "__version__ = [\"']([^\"']+)[\"']"
+result = "{0}"
 
 [tool.ruff]
 line-length = 100
