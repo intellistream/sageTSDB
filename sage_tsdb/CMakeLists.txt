@@ -52,7 +52,7 @@ set_target_properties(_sage_tsdb PROPERTIES
 if(DEFINED SKBUILD)
     if(SKBUILD_STATE STREQUAL "editable")
         # Editable install: install to source tree directly
-        set(_install_dest "${CMAKE_CURRENT_SOURCE_DIR}/../../python")
+        set(_install_dest "${CMAKE_CURRENT_SOURCE_DIR}")
         # Also install C++ libraries to same location
         install(TARGETS sage_tsdb_core sage_tsdb_algorithms
             LIBRARY DESTINATION ${_install_dest}
@@ -62,7 +62,7 @@ if(DEFINED SKBUILD)
         )
     else()
         # Wheel build: install to wheel platlib
-        set(_install_dest "${SKBUILD_PLATLIB_DIR}/sage/middleware/components/sage_tsdb/python")
+        set(_install_dest "${SKBUILD_PLATLIB_DIR}/sage_tsdb")
     endif()
     
     install(TARGETS _sage_tsdb

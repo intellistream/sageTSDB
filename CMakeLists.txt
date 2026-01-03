@@ -334,7 +334,7 @@ if(DEFINED SKBUILD)
     endif()
     
     # Python package build mode - install to same directory as Python extension
-    install(TARGETS _sage_tsdb sage_tsdb_core sage_tsdb_algorithms
+    install(TARGETS sage_tsdb_core sage_tsdb_algorithms
         LIBRARY DESTINATION ${_lib_install_dest}
         ARCHIVE DESTINATION ${_lib_install_dest}
         RUNTIME DESTINATION ${_lib_install_dest}
@@ -342,7 +342,7 @@ if(DEFINED SKBUILD)
     )
 else()
     # Standalone C++ build mode - standard installation paths
-    install(TARGETS _sage_tsdb sage_tsdb sage_tsdb_core sage_tsdb_algorithms
+    install(TARGETS sage_tsdb sage_tsdb_core sage_tsdb_algorithms
         EXPORT sageTSDBTargets
         LIBRARY DESTINATION lib
         ARCHIVE DESTINATION lib
@@ -385,7 +385,7 @@ endif()
 
 # Python bindings
 if(BUILD_PYTHON_BINDINGS)
-    add_subdirectory(python)
+    add_subdirectory(sage_tsdb)
 endif()
 
 # Tests
