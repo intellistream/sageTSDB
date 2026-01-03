@@ -99,6 +99,37 @@ target_link_libraries(test_table_design
     test_utils
 )
 
+# PECJ operators tests (basic tests without PECJ integration)
+add_executable(test_pecj_operators
+  test_pecj_operators.cpp
+)
+target_link_libraries(test_pecj_operators
+  PRIVATE
+    GTest::gtest_main
+    test_utils
+)
+# Add compute library if available (for full integration tests)
+if(TARGET sage_tsdb_compute)
+    target_link_libraries(test_pecj_operators PRIVATE sage_tsdb_compute)
+    target_compile_definitions(test_pecj_operators PRIVATE PECJ_MODE_INTEGRATED)
+endif()
+
+# PECJ Compute Engine integration tests (requires compute library)
+if(TARGET sage_tsdb_compute)
+    add_executable(test_pecj_compute_engine
+      test_pecj_compute_engine.cpp
+    )
+    target_link_libraries(test_pecj_compute_engine
+      PRIVATE
+        sage_tsdb_compute
+        sage_tsdb_core
+        GTest::gtest_main
+        test_utils
+    )
+    target_compile_definitions(test_pecj_compute_engine PRIVATE PECJ_MODE_INTEGRATED)
+    message(STATUS "Building PECJ Compute Engine tests")
+endif()
+
 # WindowScheduler tests (only if compute library is built)
 if(TARGET sage_tsdb_compute)
     add_executable(test_window_scheduler
@@ -171,9 +202,14 @@ gtest_discover_tests(test_stream_join)
 gtest_discover_tests(test_window_aggregator)
 gtest_discover_tests(test_storage_engine)
 gtest_discover_tests(test_table_design)
+gtest_discover_tests(test_pecj_operators)
 
 if(TARGET test_window_scheduler)
     gtest_discover_tests(test_window_scheduler)
+endif()
+
+if(TARGET test_pecj_compute_engine)
+    gtest_discover_tests(test_pecj_compute_engine)
 endif()
 
 if(TARGET test_pecj_plugin)

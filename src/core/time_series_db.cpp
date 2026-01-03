@@ -93,6 +93,7 @@ std::vector<TimeSeriesData> TimeSeriesDB::query(const std::string& table_name,
                                                   const TimeRange& time_range,
                                                   const Tags& filter_tags) const {
     QueryConfig config(time_range, filter_tags);
+    config.limit = 0;  // No limit when querying by TimeRange
     return query(table_name, config);
 }
 

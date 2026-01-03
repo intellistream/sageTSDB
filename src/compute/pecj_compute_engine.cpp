@@ -34,6 +34,14 @@ using namespace std;
 #include "Operator/IAWJOperator.h"
 #include "Operator/MSWJOperator.h"
 #include "Operator/RawSHJOperator.h"
+#include "Operator/RawPRJOperator.h"
+#include "Operator/MeanAQPIAWJOperator.h"
+#include "Operator/IMAIAWJOperator.h"
+#include "Operator/IAWJSelOperator.h"
+#include "Operator/LazyIAWJSelOperator.h"
+#include "Operator/AIOperator.h"
+#include "Operator/LinearSVIOperator.h"
+#include "Operator/PECJOperator.h"
 #include "Common/Tuples.h"
 #include <sys/time.h>
 #endif
@@ -90,7 +98,7 @@ PECJComputeEngine::~PECJComputeEngine() {
 
 bool PECJComputeEngine::initialize(const ComputeConfig& config,
                                    TimeSeriesDB* db,
-                                   plugins::ResourceHandle* resource_handle) {
+                                   core::ResourceHandle* resource_handle) {
     if (initialized_.load()) {
         return false; // Already initialized
     }
@@ -133,21 +141,69 @@ bool PECJComputeEngine::createPECJOperator() {
         // Set window parameters (in microseconds)
         pecj_config->edit("windowLen", config_.window_len_us);
         pecj_config->edit("slideLen", config_.slide_len_us);
-        pecj_config->edit("sLen", static_cast<uint64_t>(100000)); // S buffer size
-        pecj_config->edit("rLen", static_cast<uint64_t>(100000)); // R buffer size
-        pecj_config->edit("timeStep", static_cast<uint64_t>(1000)); // Time step in us
-        pecj_config->edit("joinSum", static_cast<uint64_t>(1)); // Enable join result counting
+        pecj_config->edit("sLen", config_.s_buffer_len);
+        pecj_config->edit("rLen", config_.r_buffer_len);
+        pecj_config->edit("timeStep", config_.time_step_us);
+        // joinSum=0: count matching tuple pairs (Join Count)
+        // joinSum=1: compute sum of (count * avg_value) (Join Sum aggregation)
+        pecj_config->edit("joinSum", static_cast<uint64_t>(config_.join_sum ? 1 : 0));
         
-        // Create operator based on type
-        if (config_.operator_type == "IAWJ" || config_.operator_type == "IMA") {
-            pecj_operator_ = std::make_shared<OoOJoin::IAWJOperator>();
-        } else if (config_.operator_type == "MWAY") {
-            pecj_operator_ = std::make_shared<OoOJoin::MSWJOperator>();
-        } else if (config_.operator_type == "SHJ") {
-            pecj_operator_ = std::make_shared<OoOJoin::RawSHJOperator>();
-        } else {
-            // Default to IAWJ
-            pecj_operator_ = std::make_shared<OoOJoin::IAWJOperator>();
+        // Set watermark parameters
+        pecj_config->edit("wmTag", config_.watermark_tag);
+        pecj_config->edit("watermarkTimeMs", config_.watermark_time_ms);
+        pecj_config->edit("latenessMs", config_.lateness_ms);
+        
+        // Set operator-specific parameters
+        if (config_.ima_disable_compensation) {
+            pecj_config->edit("imaDisableCompensation", static_cast<uint64_t>(1));
+        }
+        if (config_.mswj_compensation) {
+            pecj_config->edit("mswjCompensation", static_cast<uint64_t>(1));
+        }
+        
+        // Sync operator_enum with operator_type string if needed
+        PECJOperatorType op_type = stringToOperatorType(config_.operator_type);
+        
+        // Create operator based on type - support all PECJ operators
+        switch (op_type) {
+            case PECJOperatorType::IAWJ:
+                pecj_operator_ = std::make_shared<OoOJoin::IAWJOperator>();
+                break;
+            case PECJOperatorType::MeanAQP:
+                pecj_operator_ = std::make_shared<OoOJoin::MeanAQPIAWJOperator>();
+                break;
+            case PECJOperatorType::IMA:
+                pecj_operator_ = std::make_shared<OoOJoin::IMAIAWJOperator>();
+                break;
+            case PECJOperatorType::MSWJ:
+                pecj_operator_ = std::make_shared<OoOJoin::MSWJOperator>();
+                break;
+            case PECJOperatorType::AI:
+                pecj_operator_ = std::make_shared<OoOJoin::AIOperator>();
+                break;
+            case PECJOperatorType::LinearSVI:
+                pecj_operator_ = std::make_shared<OoOJoin::LinearSVIOperator>();
+                break;
+            case PECJOperatorType::IAWJSel:
+                pecj_operator_ = std::make_shared<OoOJoin::IAWJSelOperator>();
+                break;
+            case PECJOperatorType::LazyIAWJSel:
+                pecj_operator_ = std::make_shared<OoOJoin::LazyIAWJSelOperator>();
+                break;
+            case PECJOperatorType::SHJ:
+                pecj_operator_ = std::make_shared<OoOJoin::RawSHJOperator>();
+                break;
+            case PECJOperatorType::PRJ:
+                pecj_operator_ = std::make_shared<OoOJoin::RawPRJOperator>();
+                break;
+            case PECJOperatorType::PECJ:
+                // PECJ uses IMAIAWJOperator internally (same as PECJOperator)
+                pecj_operator_ = std::make_shared<OoOJoin::IMAIAWJOperator>();
+                break;
+            default:
+                // Default to IAWJ
+                pecj_operator_ = std::make_shared<OoOJoin::IAWJOperator>();
+                break;
         }
         
         if (!pecj_operator_) {
@@ -159,18 +215,12 @@ bool PECJComputeEngine::createPECJOperator() {
             return false;
         }
         
-        // Set window parameters
+        // Set initial window parameters (will be adjusted in executeWindowJoin)
         pecj_operator_->setWindow(config_.window_len_us, config_.slide_len_us);
         
-        // Synchronize time structure
-        struct timeval tv;
-        gettimeofday(&tv, nullptr);
-        pecj_operator_->syncTimeStruct(tv);
-        
-        // Start the operator
-        if (!pecj_operator_->start()) {
-            return false;
-        }
+        // Note: We don't call syncTimeStruct or start() here anymore.
+        // These will be called in executeWindowJoin() with the correct
+        // window parameters based on actual data timestamps.
         
         return true;
         
@@ -228,14 +278,57 @@ ComputeStatus PECJComputeEngine::executeWindowJoin(uint64_t window_id,
         status.input_s_count = s_data_tsdb.size();
         status.input_r_count = r_data_tsdb.size();
         
-        // Debug: Print query results
-        std::cout << "    [DEBUG] Queried S: " << s_data_tsdb.size() 
-                  << " tuples, R: " << r_data_tsdb.size() << " tuples\n";
+        // =====================================================================
+        // CRITICAL FIX: Reinitialize PECJ operator for each window execution
+        // 
+        // PECJ Window Semantics:
+        // - start() sets window to [0, windowLen] (relative time)
+        // - feedTuple checks if tuple.eventTime is within [startTime, endTime]
+        // - We need to normalize eventTime to be within the window range
+        // =====================================================================
         
-        // Step 2: Feed data to PECJ operator
-        size_t join_count_before = pecj_operator_->getResult();
+        // Calculate the min timestamp from queried data
+        uint64_t min_timestamp = UINT64_MAX;
+        uint64_t max_timestamp = 0;
         
-        size_t s_fed = 0;
+        for (const auto& data : s_data_tsdb) {
+            if (data.timestamp < min_timestamp) min_timestamp = data.timestamp;
+            if (data.timestamp > max_timestamp) max_timestamp = data.timestamp;
+        }
+        for (const auto& data : r_data_tsdb) {
+            if (data.timestamp < min_timestamp) min_timestamp = data.timestamp;
+            if (data.timestamp > max_timestamp) max_timestamp = data.timestamp;
+        }
+        
+        // Handle empty data case
+        if (min_timestamp == UINT64_MAX) {
+            min_timestamp = 0;
+            max_timestamp = config_.window_len_us;
+        }
+        
+        // Calculate window length to cover all data with some margin
+        uint64_t actual_data_span = max_timestamp - min_timestamp + 1;
+        uint64_t effective_window_len = std::max(config_.window_len_us, actual_data_span + 1000);
+        
+        // Reconfigure PECJ operator with correct window size
+        pecj_operator_->setWindow(effective_window_len, config_.slide_len_us);
+        
+        // Synchronize time structure - this is the reference point for relative time
+        struct timeval tv;
+        gettimeofday(&tv, nullptr);
+        pecj_operator_->syncTimeStruct(tv);
+        
+        // CRITICAL: Call start() to reset window state to [0, effective_window_len]
+        if (!pecj_operator_->start()) {
+            status.success = false;
+            status.error = "Failed to restart PECJ operator";
+            return status;
+        }
+        
+        // Step 2: Feed data to PECJ operator with NORMALIZED eventTime
+        // Use getAQPResult() to get results with prediction compensation (for IMA operator)
+        size_t join_count_before = pecj_operator_->getAQPResult();
+        
         for (const auto& data : s_data_tsdb) {
             // Convert TimeSeriesData to PECJ tuple
             OoOJoin::keyType key = 0;
@@ -248,20 +341,15 @@ ComputeStatus PECJComputeEngine::executeWindowJoin(uint64_t window_id,
                 value = static_cast<OoOJoin::valueType>(std::stod(data.fields.at("value")));
             }
             
-            auto tuple = std::make_shared<OoOJoin::TrackTuple>(key, value, data.timestamp, data.timestamp);
-            pecj_operator_->feedTupleS(tuple);
-            s_fed++;
+            // CRITICAL FIX: Normalize eventTime to be within [0, window_len]
+            // eventTime is what PECJ uses to determine if tuple is in window
+            OoOJoin::tsType eventTime = data.timestamp - min_timestamp;  // Normalized to start from 0
+            OoOJoin::tsType arrivalTime = data.timestamp - min_timestamp;  // Also normalized
             
-            // Debug: Print first few tuples
-            if (s_fed <= 3) {
-                std::cout << "    [DEBUG] Fed S tuple: key=" << key 
-                          << ", value=" << value 
-                          << ", timestamp=" << data.timestamp << "\n";
-            }
+            auto tuple = std::make_shared<OoOJoin::TrackTuple>(key, value, eventTime, arrivalTime);
+            pecj_operator_->feedTupleS(tuple);
         }
-        std::cout << "    [DEBUG] Fed " << s_fed << " S tuples\n";
         
-        size_t r_fed = 0;
         for (const auto& data : r_data_tsdb) {
             // Convert TimeSeriesData to PECJ tuple
             OoOJoin::keyType key = 0;
@@ -274,27 +362,35 @@ ComputeStatus PECJComputeEngine::executeWindowJoin(uint64_t window_id,
                 value = static_cast<OoOJoin::valueType>(std::stod(data.fields.at("value")));
             }
             
-            auto tuple = std::make_shared<OoOJoin::TrackTuple>(key, value, data.timestamp, data.timestamp);
-            pecj_operator_->feedTupleR(tuple);
-            r_fed++;
+            // CRITICAL FIX: Normalize eventTime to be within [0, window_len]
+            OoOJoin::tsType eventTime = data.timestamp - min_timestamp;  // Normalized to start from 0
+            OoOJoin::tsType arrivalTime = data.timestamp - min_timestamp;  // Also normalized
             
-            // Debug: Print first few tuples
-            if (r_fed <= 3) {
-                std::cout << "    [DEBUG] Fed R tuple: key=" << key 
-                          << ", value=" << value 
-                          << ", timestamp=" << data.timestamp << "\n";
+            auto tuple = std::make_shared<OoOJoin::TrackTuple>(key, value, eventTime, arrivalTime);
+            pecj_operator_->feedTupleR(tuple);
+        }
+        
+        // Step 3: Get join results BEFORE stopping (stop() may clear state)
+        // Get both confirmed result and AQP result for comparison
+        size_t confirmed_result = pecj_operator_->getResult();
+        size_t aqp_result = pecj_operator_->getAQPResult();
+        status.join_count = aqp_result - join_count_before;
+        
+        // Step 3.5: Get AQP result if operator supports it
+        PECJOperatorType op_type = stringToOperatorType(config_.operator_type);
+        if (operatorSupportsAQP(op_type)) {
+            status.aqp_estimate = static_cast<double>(aqp_result);
+            status.used_aqp = true;
+            
+            // Calculate AQP error
+            if (confirmed_result > 0) {
+                status.aqp_error = std::abs(static_cast<double>(confirmed_result) - status.aqp_estimate) 
+                                 / static_cast<double>(confirmed_result);
             }
         }
-        std::cout << "    [DEBUG] Fed " << r_fed << " R tuples\n";
         
-        // Step 3: Get join results
-        size_t join_count_after = pecj_operator_->getResult();
-        status.join_count = join_count_after - join_count_before;
-        
-        // Debug: Print join results
-        std::cout << "    [DEBUG] Join results: before=" << join_count_before 
-                  << ", after=" << join_count_after 
-                  << ", delta=" << status.join_count << "\n";
+        // Step 4: Stop operator after getting results
+        pecj_operator_->stop();
         
         // Step 4: Calculate metrics
         auto end_time = std::chrono::steady_clock::now();

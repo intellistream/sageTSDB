@@ -86,8 +86,10 @@ public:
         uint64_t slide_len_us = 500000;      // Slide length in microseconds
         uint64_t lateness_ms = 100;          // Max allowed lateness in ms
         uint64_t time_step_us = 1000;        // Internal time step
-        size_t s_buffer_len = 10000;         // S stream buffer size
-        size_t r_buffer_len = 10000;         // R stream buffer size
+        size_t s_buffer_len = 100000;        // S stream buffer size (match Integrated Mode default)
+        size_t r_buffer_len = 100000;        // R stream buffer size (match Integrated Mode default)
+        uint64_t watermark_time_ms = 10;     // Watermark interval in ms (how often to trigger watermark)
+        std::string wm_tag = "arrival";      // Watermark strategy: "arrival", "lateness", "period", etc.
     };
     
     explicit PECJAdapter(const PluginConfig& config);
@@ -132,6 +134,16 @@ public:
      * @note Thread-safe, uses lock-free queue internally
      */
     void feedStreamR(const TimeSeriesData& data);
+    
+    /**
+     * @brief Restart PECJ operator for a new window
+     * This resets the operator state and prepares for processing new data.
+     * Used for batch/window-by-window processing mode.
+     * @param window_start Start time of the new window (for normalization)
+     * @param window_len Length of the window in microseconds
+     * @return true if restart successful
+     */
+    bool restartOperator(uint64_t window_start = 0, uint64_t window_len = 0);
     
     /**
      * @brief Get exact join result count
@@ -204,6 +216,9 @@ private:
     
     // Time base for PECJ
     struct timeval time_base_;
+    
+    // Minimum timestamp seen (for normalization) - used to normalize arrival times
+    uint64_t min_timestamp_ = 0;
 #endif
     
     // Operator type

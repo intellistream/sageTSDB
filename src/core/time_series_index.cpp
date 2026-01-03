@@ -116,10 +116,27 @@ void TimeSeriesIndex::ensure_sorted() {
     std::unique_lock<std::shared_mutex> lock(mutex_);
     
     if (!sorted_) {
-        // Sort data by timestamp
-        std::sort(data_.begin(), data_.end(),
+        // Sort data by timestamp, then by key for deterministic ordering
+        // Use stable_sort to maintain relative order of equal elements
+        std::stable_sort(data_.begin(), data_.end(),
                  [](const TimeSeriesData& a, const TimeSeriesData& b) {
-                     return a.timestamp < b.timestamp;
+                     // Primary sort by timestamp
+                     if (a.timestamp != b.timestamp) {
+                         return a.timestamp < b.timestamp;
+                     }
+                     // Secondary sort by key for deterministic ordering
+                     uint64_t key_a = 0, key_b = 0;
+                     if (a.tags.find("key") != a.tags.end()) {
+                         try {
+                             key_a = std::stoull(a.tags.at("key"));
+                         } catch (...) {}
+                     }
+                     if (b.tags.find("key") != b.tags.end()) {
+                         try {
+                             key_b = std::stoull(b.tags.at("key"));
+                         } catch (...) {}
+                     }
+                     return key_a < key_b;
                  });
         
         // Rebuild tag index
@@ -133,36 +150,43 @@ size_t TimeSeriesIndex::binary_search(int64_t timestamp, bool find_upper) const 
         return 0;
     }
     
-    size_t left = 0;
-    size_t right = data_.size() - 1;
-    size_t result = find_upper ? right : 0;
-    
-    while (left <= right) {
-        size_t mid = left + (right - left) / 2;
-        int64_t mid_time = data_[mid].timestamp;
+    if (find_upper) {
+        // Find the last element with timestamp <= target
+        // This is similar to upper_bound - 1
+        size_t left = 0;
+        size_t right = data_.size();
         
-        if (mid_time < timestamp) {
-            left = mid + 1;
-            if (!find_upper) {
-                result = left;
+        while (left < right) {
+            size_t mid = left + (right - left) / 2;
+            if (data_[mid].timestamp <= timestamp) {
+                left = mid + 1;
+            } else {
+                right = mid;
             }
-        } else if (mid_time > timestamp) {
-            if (mid == 0) break;
-            right = mid - 1;
-            if (find_upper) {
-                result = right;
-            }
-        } else {
-            return mid;
         }
+        
+        // left now points to the first element > timestamp
+        // We want the last element <= timestamp, so return left - 1
+        // But if all elements are > timestamp, return 0 (no valid range)
+        return (left > 0) ? (left - 1) : 0;
+    } else {
+        // Find the first element with timestamp >= target
+        // This is lower_bound
+        size_t left = 0;
+        size_t right = data_.size();
+        
+        while (left < right) {
+            size_t mid = left + (right - left) / 2;
+            if (data_[mid].timestamp < timestamp) {
+                left = mid + 1;
+            } else {
+                right = mid;
+            }
+        }
+        
+        // left now points to the first element >= timestamp
+        return left;
     }
-    
-    // Clamp result to valid range
-    if (result >= data_.size()) {
-        result = data_.size() - 1;
-    }
-    
-    return result;
 }
 
 std::vector<size_t> TimeSeriesIndex::filter_by_tags(const Tags& tags) const {

@@ -11,7 +11,12 @@ add_compile_definitions(_GLIBCXX_USE_CXX11_ABI=0)
 
 # Options
 option(BUILD_TESTS "Build tests" ON)
-option(BUILD_PYTHON_BINDINGS "Build Python bindings" OFF)
+# Auto-enable Python bindings for wheel builds
+if(DEFINED SKBUILD)
+    set(BUILD_PYTHON_BINDINGS ON CACHE BOOL "Build Python bindings" FORCE)
+else()
+    option(BUILD_PYTHON_BINDINGS "Build Python bindings" OFF)
+endif()
 option(BUILD_SHARED_LIBS "Build shared libraries" ON)
 option(ENABLE_OPENMP "Enable OpenMP support" ON)
 
@@ -324,12 +329,12 @@ if(DEFINED SKBUILD)
             set(_lib_install_dest "${SAGE_TSDB_INSTALL_DIR}")
             message(STATUS "sageTSDB: Using parent-defined install dir: ${_lib_install_dest}")
         else()
-            set(_lib_install_dest "${CMAKE_CURRENT_SOURCE_DIR}/python")
+            set(_lib_install_dest "${CMAKE_CURRENT_SOURCE_DIR}/sage_tsdb")
             message(STATUS "sageTSDB: Using default editable install dir: ${_lib_install_dest}")
         endif()
     else()
         # Wheel build: install to wheel platlib (same directory as Python extension)
-        set(_lib_install_dest "${SKBUILD_PLATLIB_DIR}/sage/middleware/components/sage_tsdb/python")
+        set(_lib_install_dest "${SKBUILD_PLATLIB_DIR}/sage_tsdb")
         message(STATUS "sageTSDB: Wheel build, lib -> ${_lib_install_dest}")
     endif()
     
@@ -385,7 +390,7 @@ endif()
 
 # Python bindings
 if(BUILD_PYTHON_BINDINGS)
-    add_subdirectory(python)
+    add_subdirectory(sage_tsdb)
 endif()
 
 # Tests

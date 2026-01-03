@@ -18,6 +18,18 @@
 #include <iostream>
 #include <sys/time.h>
 
+// Include specific operator headers for direct instantiation
+#ifdef PECJ_FULL_INTEGRATION
+#include <Operator/IAWJOperator.h>
+#include <Operator/IMAIAWJOperator.h>
+#include <Operator/MSWJOperator.h>
+#include <Operator/AIOperator.h>
+#include <Operator/LinearSVIOperator.h>
+#include <Operator/MeanAQPIAWJOperator.h>
+#include <Operator/RawSHJOperator.h>
+#include <Operator/RawPRJOperator.h>
+#endif
+
 namespace sage_tsdb {
 namespace plugins {
 
@@ -57,6 +69,14 @@ void PECJAdapter::parseConfig(const PluginConfig& config) {
     }
     if (config.count("rLen")) {
         window_config_.r_buffer_len = std::stoull(config.at("rLen"));
+    }
+    
+    // Parse watermark configuration
+    if (config.count("watermarkTimeMs")) {
+        window_config_.watermark_time_ms = std::stoull(config.at("watermarkTimeMs"));
+    }
+    if (config.count("wmTag")) {
+        window_config_.wm_tag = config.at("wmTag");
     }
     
     // Parse operator type
@@ -140,32 +160,82 @@ bool PECJAdapter::initializePECJ() {
         pecj_config_->edit("timeStep", static_cast<uint64_t>(window_config_.time_step_us));
         pecj_config_->edit("latenessMs", static_cast<uint64_t>(window_config_.lateness_ms));
         
-        // Get operator from table
-        OoOJoin::OperatorTable op_table;
-        std::string op_name;
+        // CRITICAL: Match Integrated Mode's joinSum configuration
+        // joinSum=1 enables join result counting and affects AQP calculation path
+        // Without this, IMA operator uses different AQP formula, causing result mismatch
+        pecj_config_->edit("joinSum", static_cast<uint64_t>(1));
         
+        // CRITICAL: Set watermark configuration for proper batch processing
+        // Without this, watermark triggers too early (default 10ms) and terminates processing
+        pecj_config_->edit("watermarkTimeMs", static_cast<uint64_t>(window_config_.watermark_time_ms));
+        pecj_config_->edit("wmTag", window_config_.wm_tag);
+        
+        std::cout << "  Watermark Tag: " << window_config_.wm_tag << std::endl;
+        std::cout << "  Watermark Time: " << window_config_.watermark_time_ms << " ms" << std::endl;
+        
+        // CRITICAL FIX: Create operator directly instead of using OperatorTable
+        // OperatorTable creates operator instances in its constructor, and these
+        // instances may have different initial state than freshly created ones.
+        // This was causing AQP discrepancy between Plugin Mode and Integrated Mode.
+        //
+        // Match Integrated Mode's approach: use std::make_shared to create operator directly.
+        std::string op_name;
         switch (operator_type_) {
-            case OperatorType::IAWJ: op_name = "IAWJ"; break;
-            case OperatorType::IMA: op_name = "IMA"; break;
-            case OperatorType::MSWJ: op_name = "MSWJ"; break;
-            case OperatorType::AI: op_name = "AI"; break;
-            case OperatorType::LINEAR_SVI: op_name = "LinearSVI"; break;
-            case OperatorType::MEAN_AQP: op_name = "MeanAQP"; break;
-            case OperatorType::SHJ: op_name = "SHJ"; break;
-            case OperatorType::PRJ: op_name = "PRJ"; break;
+            case OperatorType::IAWJ:
+                pecj_operator_ = std::make_shared<OoOJoin::IAWJOperator>();
+                op_name = "IAWJ";
+                break;
+            case OperatorType::IMA:
+                pecj_operator_ = std::make_shared<OoOJoin::IMAIAWJOperator>();
+                op_name = "IMA";
+                break;
+            case OperatorType::MSWJ:
+                pecj_operator_ = std::make_shared<OoOJoin::MSWJOperator>();
+                op_name = "MSWJ";
+                break;
+            case OperatorType::AI:
+                pecj_operator_ = std::make_shared<OoOJoin::AIOperator>();
+                op_name = "AI";
+                break;
+            case OperatorType::LINEAR_SVI:
+                pecj_operator_ = std::make_shared<OoOJoin::LinearSVIOperator>();
+                op_name = "LinearSVI";
+                break;
+            case OperatorType::MEAN_AQP:
+                pecj_operator_ = std::make_shared<OoOJoin::MeanAQPIAWJOperator>();
+                op_name = "MeanAQP";
+                break;
+            case OperatorType::SHJ:
+                pecj_operator_ = std::make_shared<OoOJoin::RawSHJOperator>();
+                op_name = "SHJ";
+                break;
+            case OperatorType::PRJ:
+                pecj_operator_ = std::make_shared<OoOJoin::RawPRJOperator>();
+                op_name = "PRJ";
+                break;
+            default:
+                // Fallback to IMA
+                pecj_operator_ = std::make_shared<OoOJoin::IMAIAWJOperator>();
+                op_name = "IMA";
+                break;
         }
         
-        pecj_operator_ = op_table.findOperator(op_name);
         if (!pecj_operator_) {
-            std::cerr << "Failed to find PECJ operator: " << op_name << std::endl;
+            std::cerr << "Failed to create PECJ operator: " << op_name << std::endl;
             return false;
         }
         
         // Configure operator
+        // NOTE: Match Integrated Mode's initialize() behavior:
+        // - Call setConfig() to configure operator
+        // - Call setWindow() to set initial window parameters
+        // - Call setBufferLen() to set buffer lengths
+        // - Do NOT call syncTimeStruct() here - it will be called in restartOperator()
+        //   This matches Integrated Mode which doesn't call syncTimeStruct() in initialize()
         pecj_operator_->setConfig(pecj_config_);
         pecj_operator_->setWindow(window_config_.window_len_us, window_config_.slide_len_us);
         pecj_operator_->setBufferLen(window_config_.s_buffer_len, window_config_.r_buffer_len);
-        pecj_operator_->syncTimeStruct(time_base_);
+        // syncTimeStruct() will be called in restartOperator() before start()
         
         std::cout << "  Operator: " << op_name << std::endl;
         std::cout << "  Window: " << window_config_.window_len_us << " us" << std::endl;
@@ -207,13 +277,11 @@ bool PECJAdapter::start() {
         return true;  // Already running
     }
     
-#ifdef PECJ_FULL_INTEGRATION
-    // Start PECJ operator
-    if (pecj_operator_ && !pecj_operator_->start()) {
-        std::cerr << "Failed to start PECJ operator" << std::endl;
-        return false;
-    }
-#endif
+    // NOTE: Do NOT call pecj_operator_->start() here!
+    // The operator will be started by restartOperator() with correct window parameters.
+    // Calling start() twice (here and in restartOperator) causes state inconsistency
+    // because PECJ's start() doesn't fully reset all internal state variables
+    // (e.g., max_ratio, alpha in MeanAQPIAWJOperator), leading to different AQP results.
     
     running_.store(true);
     
@@ -271,12 +339,75 @@ void PECJAdapter::reset() {
     join_results_.store(0);
     total_latency_us_.store(0);
     
+#ifdef PECJ_FULL_INTEGRATION
+    // Reset timestamp normalization
+    min_timestamp_ = 0;
+#endif
+    
     // Clear data queue
     {
         std::lock_guard<std::mutex> qlock(queue_mutex_);
         std::queue<std::pair<TimeSeriesData, bool>> empty;
         std::swap(data_queue_, empty);
     }
+}
+
+bool PECJAdapter::restartOperator(uint64_t window_start, uint64_t window_len) {
+#ifdef PECJ_FULL_INTEGRATION
+    if (!pecj_operator_) {
+        std::cerr << "PECJ operator not initialized" << std::endl;
+        return false;
+    }
+    
+    // Reset statistics
+    tuples_processed_s_.store(0);
+    tuples_processed_r_.store(0);
+    total_latency_us_.store(0);
+    
+    // Reset timestamp normalization for new window
+    min_timestamp_ = window_start;
+    
+    // Update window configuration if provided
+    if (window_len > 0) {
+        window_config_.window_len_us = window_len;
+    }
+    
+    // Match Integrated Mode's executeWindowJoin() behavior EXACTLY:
+    // Integrated Mode reuses the SAME operator instance created in initialize(),
+    // and for each window only calls:
+    //   1. setWindow(effective_window_len, slide_len_us)
+    //   2. syncTimeStruct(tv)
+    //   3. start()
+    //
+    // Integrated Mode does NOT:
+    //   - Create new operator instance
+    //   - Call setConfig() again
+    //   - Call setBufferLen() again
+    //
+    // This is critical because:
+    // - setConfig() recreates the watermark generator which affects timing behavior
+    // - Creating new instances may have different initial state
+    
+    // 1. setWindow() - configure window parameters
+    pecj_operator_->setWindow(window_config_.window_len_us, window_config_.slide_len_us);
+    
+    // 2. syncTimeStruct() - synchronize time reference
+    struct timeval tv;
+    gettimeofday(&tv, nullptr);
+    pecj_operator_->syncTimeStruct(tv);
+    
+    // 3. start() - reset window state
+    if (!pecj_operator_->start()) {
+        std::cerr << "Failed to start PECJ operator" << std::endl;
+        return false;
+    }
+    
+    return true;
+#else
+    (void)window_start;
+    (void)window_len;
+    return true;
+#endif
 }
 
 // ============================================================================
@@ -370,18 +501,38 @@ std::shared_ptr<OoOJoin::TrackTuple> PECJAdapter::convertToTrackTuple(
         }
     }
     
-    // Get value
-    uint64_t value = static_cast<uint64_t>(data.as_double());
+    // Get value - CRITICAL FIX: Match Integrated Mode which uses fields["value"]
+    // Instead of data.as_double() which reads from variant (often unset)
+    uint64_t value = 0;
+    if (data.fields.find("value") != data.fields.end()) {
+        try {
+            value = static_cast<uint64_t>(std::stod(data.fields.at("value")));
+        } catch (...) {
+            value = 0;
+        }
+    } else {
+        // Fallback to as_double() for backward compatibility
+        value = static_cast<uint64_t>(data.as_double());
+    }
     
     // Create TrackTuple
     auto tuple = std::make_shared<OoOJoin::TrackTuple>(key, value);
-    tuple->eventTime = static_cast<uint64_t>(data.timestamp);
     
-    // Set arrival time to current time
-    struct timeval now;
-    gettimeofday(&now, nullptr);
-    tuple->arrivalTime = (now.tv_sec - time_base_.tv_sec) * 1000000ULL + 
-                         (now.tv_usec - time_base_.tv_usec);
+    // CRITICAL FIX: Normalize BOTH eventTime and arrivalTime
+    // This matches Integrated Mode behavior where all timestamps start from 0.
+    // 
+    // PECJ's window logic uses eventTime to determine if tuple is within window bounds.
+    // PECJ's watermark logic uses arrivalTime (for ArrivalWM) or eventTime (for LatenessWM).
+    // 
+    // Without normalization, data timestamps (e.g., 1000000000) would be outside
+    // the typical window range (e.g., [0, 10000]).
+    if (min_timestamp_ == 0 && data.timestamp > 0) {
+        min_timestamp_ = static_cast<uint64_t>(data.timestamp);
+    }
+    
+    uint64_t normalized_time = static_cast<uint64_t>(data.timestamp) - min_timestamp_;
+    tuple->eventTime = normalized_time;
+    tuple->arrivalTime = normalized_time;
     
     // Set stream ID
     tuple->streamId = is_s_stream ? 0 : 1;
