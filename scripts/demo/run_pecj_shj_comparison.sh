@@ -3,7 +3,7 @@
 # =============================================================================
 # PECJ vs SHJ Comparison Demo Script
 # =============================================================================
-# 对应示例: examples/pecj_shj_comparison_demo.cpp
+# 对应示例: examples/integration/pecj_shj_comparison_demo.cpp
 # 
 # 功能: 比较 PECJ (IMA) 算法与 SHJ (Symmetric Hash Join) 算法的性能
 # - 小规模和大规模数据测试

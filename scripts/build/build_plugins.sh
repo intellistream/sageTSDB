@@ -98,7 +98,7 @@ if [ -f "./lib/libsage_tsdb_plugins.so" ] || [ -f "./lib/libsage_tsdb_plugins.a"
     echo "  ./tests/test_fault_detection_plugin"
     echo ""
     echo "Run plugin example with:"
-    echo "  ./examples/plugin_usage_example"
+    echo "  ./examples/plugins/plugin_usage_example"
 else
     echo -e "${YELLOW}✗ Plugins not built (PECJ not available)${NC}"
     echo "To build with plugins: export PECJ_DIR=/path/to/PECJ"

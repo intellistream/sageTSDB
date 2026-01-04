@@ -4,417 +4,69 @@
 
 ---
 
-## 📋 脚本分类索引
+## �� 目录结构
 
-### 🔨 构建脚本
-- [build.sh](#buildsh) - 主构建脚本（所有示例）
-- [build_and_test.sh](#build_and_testsh) - 构建并测试（所有示例）
-- [build_plugins.sh](#build_pluginssh) - 插件系统构建
-
-### 🎮 演示运行脚本
-- [run_demo.sh](#run_demosh) - 交互式演示启动器
-- [run_high_disorder_demo.sh](#run_high_disorder_demosh) - 高乱序场景测试
-- [demo_disorder_showcase.sh](#demo_disorder_showcasesh) - 乱序能力展示
-- [benchmark_disorder.sh](#benchmark_disordersh) - 乱序性能基准测试
-
-### 🧪 测试和对比脚本
-- [run_pecj_shj_comparison.sh](#run_pecj_shj_comparisonsh) - PECJ vs SHJ 算法对比 🆕
-- [compare_pecj_modes.sh](#compare_pecj_modessh) - PECJ 集成模式对比
-- [test_lsm_tree.sh](#test_lsm_treesh) - LSM Tree 存储引擎测试
+```
+scripts/
+├── README.md                  # 本文件 - 脚本工具总览
+│
+├── build/                     # 构建脚本
+│   ├── README.md              # 构建脚本说明
+│   ├── build.sh               # 主构建脚本
+│   ├── build_and_test.sh      # 构建并测试
+│   └── build_plugins.sh       # 插件系统构建
+│
+├── demo/                      # 演示脚本
+│   ├── README.md              # 演示脚本说明
+│   ├── run_demo.sh            # 交互式演示启动器
+│   ├── run_disorder_demo.sh   # 乱序处理演示（合并自3个脚本）
+│   └── run_pecj_shj_comparison.sh  # 算法对比演示
+│
+└── test/                      # 测试脚本
+    ├── README.md              # 测试脚本说明
+    ├── compare_pecj_modes.sh  # PECJ 模式对比
+    └── test_lsm_tree.sh       # LSM Tree 测试
+```
 
 ---
 
-## 🔨 构建脚本
+## 📚 脚本分类说明
 
-### build.sh
+### 🔨 [构建脚本](./build/)
+用于编译项目和示例程序
 
-**功能**: 主构建脚本，适用于所有示例程序
+| 脚本 | 功能 | 对应示例 | 运行时间 |
+|------|------|---------|---------|
+| **build.sh** | 主构建脚本 | 所有 examples/ | 2-5 分钟 |
+| **build_and_test.sh** | 构建并测试 | basic/, integration/ | 5-10 分钟 |
+| **build_plugins.sh** | 插件系统构建 | plugins/ | 2-3 分钟 |
 
-**对应示例**: 
-- ✅ 所有 `examples/` 中的示例程序
-
-**用法**:
-```bash
-# 基本构建
-./scripts/build.sh
-
-# 构建并运行测试
-./scripts/build.sh --test
-
-# 构建并安装
-./scripts/build.sh --install
-```
-
-**特性**:
-- 自动检测构建目录（SAGE 统一构建或本地构建）
-- 配置 CMake 并编译项目
-- 支持测试和安装选项
-- 启用 PECJ 深度集成模式
-
-**生成的可执行文件位置**: `build/examples/`
+👉 [查看构建脚本详细说明](./build/README.md)
 
 ---
 
-### build_and_test.sh
+### 🎮 [演示脚本](./demo/)
+运行示例程序的预配置演示
 
-**功能**: 构建并运行完整的示例测试，包含验证步骤
+| 脚本 | 功能 | 对应示例 | 运行时间 |
+|------|------|---------|---------|
+| **run_demo.sh** | 交互式演示启动器 | integration/, benchmarks/ | 5-30 分钟 |
+| **run_disorder_demo.sh** | 乱序处理演示 | integration/deep_integration_demo | 5-30 分钟 |
+| **run_pecj_shj_comparison.sh** | 算法对比演示 | integration/pecj_shj_comparison_demo | 10-15 分钟 |
 
-**对应示例**:
-- ✅ `persistence_example.cpp` - 持久化测试
-- ✅ `table_design_demo.cpp` - 表设计测试
-- ✅ `pecj_replay_demo.cpp` - PECJ Join 测试
-- ✅ `integrated_demo.cpp` - 端到端集成测试
-
-**用法**:
-```bash
-./scripts/build_and_test.sh
-```
-
-**特性**:
-- 检查前置条件（CMake、g++、PECJ 库）
-- 编译所有示例程序
-- 运行快速验证测试
-- 生成测试报告
-
-**输出**: 控制台日志和测试报告
+👉 [查看演示脚本详细说明](./demo/README.md)
 
 ---
 
-### build_plugins.sh
-
-**功能**: 构建插件系统和相关示例
-
-**对应示例**:
-- 🎯 **主要**: `plugin_usage_example.cpp` - 插件系统使用演示
-- ✅ 其他所有核心库和插件
-
-**用法**:
-```bash
-./scripts/build_plugins.sh
-```
-
-**环境变量**:
-- `PECJ_DIR`: PECJ 库路径（可选，自动检测）
-
-**特性**:
-- 自动检测 PECJ 库位置
-- 支持有/无 PECJ 的构建
-- 编译核心库和所有插件
-
----
-
-## 🎮 演示运行脚本
-
-### run_demo.sh
-
-**功能**: 交互式演示启动器，支持多种预配置场景
-
-**对应示例**:
-- 🎯 **主要**: `pecj_replay_demo.cpp` - 基础流 Join 演示
-- 🎯 **主要**: `integrated_demo.cpp` - PECJ + 故障检测集成
-- 🎯 **主要**: `performance_benchmark.cpp` - 性能基准测试
-- ✅ `deep_integration_demo.cpp` - 高级集成演示（可选）
-
-**用法**:
-```bash
-# 交互式菜单
-./scripts/run_demo.sh
-
-# 直接运行特定演示
-./scripts/run_demo.sh integrated
-./scripts/run_demo.sh pecj
-./scripts/run_demo.sh performance
-```
-
-**支持的演示场景**:
-1. **Basic Replay Demo** - 基础流 Join（5 分钟）→ `pecj_replay_demo`
-2. **Integrated Demo** - PECJ + 故障检测（10 分钟）→ `integrated_demo`
-3. **Performance Benchmark** - 性能基准（15-30 分钟）→ `performance_benchmark`
-4. **Stock Data Demo** - 股票数据演示 → `pecj_replay_demo` (with stock data)
-5. **High Throughput Demo** - 高吞吐量演示 → `pecj_replay_demo` (SHJ operator)
-6. **Realtime Simulation** - 实时模拟演示 → `pecj_replay_demo` (timestamp replay)
-
-**前置条件**:
-- 已构建项目（运行 `build.sh`）
-- PECJ 数据集可用（`PECJ/benchmark/datasets/`）
-
----
-
-### run_high_disorder_demo.sh
-
-**功能**: 高乱序场景测试套件，展示系统处理乱序事件的能力
-
-**对应示例**:
-- 🎯 **主要**: `deep_integration_demo.cpp` - 深度集成乱序处理演示
-
-**用法**:
-```bash
-# 运行所有测试场景（推荐）
-./scripts/run_high_disorder_demo.sh all
-
-# 运行特定场景
-./scripts/run_high_disorder_demo.sh baseline      # 无乱序基线
-./scripts/run_high_disorder_demo.sh low-disorder  # 低乱序 (10%)
-./scripts/run_high_disorder_demo.sh med-disorder  # 中乱序 (30%)
-./scripts/run_high_disorder_demo.sh high-disorder # 高乱序 (50%)
-./scripts/run_high_disorder_demo.sh extreme       # 极端乱序 (70%)
-./scripts/run_high_disorder_demo.sh large-scale   # 大规模测试 (100K+ events)
-```
-
-**测试场景**:
-- **Baseline**: 无乱序，建立性能基线
-- **Low Disorder**: 10% 乱序率，2ms 最大延迟
-- **Medium Disorder**: 30% 乱序率，5ms 最大延迟
-- **High Disorder**: 50% 乱序率，10ms 最大延迟
-- **Extreme Disorder**: 70% 乱序率，20ms 最大延迟
-- **Large Scale**: 100K+ 事件，30% 乱序率
-
-**输出指标**:
-- 总处理时间和吞吐量
-- 乱序事件数量和延迟分布
-- 迟到事件统计（超过水位线）
-- 窗口触发数量和 Join 结果数
-
-**适用场景**: 性能评估、压力测试、技术演示
-
----
-
-### demo_disorder_showcase.sh
-
-**功能**: 快速展示高乱序和大规模处理能力（简化版）
-
-**对应示例**:
-- 🎯 **主要**: `deep_integration_demo.cpp` - 深度集成乱序处理演示
-
-**用法**:
-```bash
-./scripts/demo_disorder_showcase.sh
-```
-
-**演示内容**:
-1. **Baseline Performance** - 50K 事件，无乱序
-2. **Medium Disorder** - 50K 事件，30% 乱序，5ms 延迟
-3. **High Disorder** - 50K 事件，50% 乱序，10ms 延迟
-4. **Large Scale** - 100K 事件，30% 乱序
-
-**特点**:
-- 交互式演示，每个场景后暂停
-- 实时显示处理进度和统计信息
-- 友好的可视化输出（彩色终端）
-- 适合向非技术人员展示
-
-**运行时间**: 约 10-15 分钟
-
----
-
-### benchmark_disorder.sh
-
-**功能**: 系统化的乱序性能基准测试，生成详细报告
-
-**对应示例**:
-- 🎯 **主要**: `deep_integration_demo.cpp` - 深度集成乱序处理演示
-
-**用法**:
-```bash
-./scripts/benchmark_disorder.sh
-```
-
-**测试矩阵**:
-- **事件规模**: 10K, 50K, 100K, 200K
-- **乱序比例**: 0%, 10%, 30%, 50%, 70%
-- **最大延迟**: 0us, 1000us, 5000us, 10000us, 20000us
-
-**输出文件**:
-- `build/benchmark_results/disorder_benchmark_YYYYMMDD_HHMMSS.csv` - 详细数据
-- `build/benchmark_results/disorder_benchmark_YYYYMMDD_HHMMSS_summary.txt` - 摘要报告
-
-**CSV 字段**:
-```
-Scenario, Events, DisorderRatio, MaxDelayUs, TotalTimeMs, LoadThroughput, 
-InsertThroughput, ComputeTimeMs, DisoreredEvents, LateArrivals, MaxDisorderMs, 
-AvgDisorderMs, Windows, JoinResults
-```
-
-**适用场景**:
-- 性能评估和对比
-- 论文实验数据收集
-- 系统调优参考
-
-**运行时间**: 约 30-60 分钟（取决于测试组合）
-
----
-
-## 🧪 测试和对比脚本
-
-### run_pecj_shj_comparison.sh
-
-**功能**: 对比 PECJ (IMA) 算法与 SHJ (Symmetric Hash Join) 算法的性能差异
-
-**对应示例**:
-- 🎯 **主要**: `pecj_shj_comparison_demo.cpp` - PECJ vs SHJ 性能对比演示
-
-**用法**:
-```bash
-# 使用默认配置运行
-./scripts/run_pecj_shj_comparison.sh
-
-# 自定义参数运行
-./scripts/run_pecj_shj_comparison.sh --small-count 1000 --large-count 20000 --threads 8
-
-# 重新构建并运行
-./scripts/run_pecj_shj_comparison.sh --build
-
-# 使用自定义数据文件
-./scripts/run_pecj_shj_comparison.sh --s-file /path/to/s.csv --r-file /path/to/r.csv
-```
-
-**参数说明**:
-- `--s-file <path>`: S 流数据文件路径（默认: PECJ 数据集）
-- `--r-file <path>`: R 流数据文件路径（默认: PECJ 数据集）
-- `--small-count <n>`: 小规模测试事件数（默认: 5000）
-- `--large-count <n>`: 大规模测试事件数（默认: 50000）
-- `--threads <n>`: 使用线程数（默认: 4）
-- `--build`: 运行前重新构建
-- `--help`: 显示帮助信息
-
-**测试内容**:
-1. **小规模测试**: 验证功能正确性
-2. **大规模测试**: 比较算法性能
-3. **流模式**: 按 arrivalTime 增量处理
-4. **窗口 Join**: 滑动窗口时间序列 Join
-
-**对比指标**:
-- 插入吞吐量 (events/s)
-- 计算吞吐量 (joins/s)
-- 总体吞吐量 (events/s)
-- Join 结果数量
-- 窗口执行数量
-
-**输出示例**:
-```
-================================================================================
-COMPARISON SUMMARY
-================================================================================
-Small Scale (5000 events):
-  PECJ (IMA) - Total Time: 1464.26 ms, Join Results: 22381, Throughput: 3415 events/s
-  SHJ        - Total Time: 1374.24 ms, Join Results: 21934, Throughput: 3638 events/s
-  Speedup: PECJ is 0.94x slower than SHJ
-================================================================================
-```
-
-**适用场景**:
-- 算法性能对比
-- 流处理引擎评估
-- 技术选型参考
-
----
-
-### compare_pecj_modes.sh
-
-**功能**: 对比 PECJ 插件模式（PLUGIN）和深度集成模式（INTEGRATED）的性能差异
-
-**对应示例**:
-- 🎯 **主要**: `pecj_integrated_vs_plugin_benchmark.cpp` - PECJ 模式性能对比
-- ✅ `pecj_replay_demo.cpp` - 用于两种模式的测试
-
-**用法**:
-```bash
-# 使用默认配置
-./scripts/compare_pecj_modes.sh
-
-# 指定 PECJ 路径
-PECJ_DIR=/path/to/PECJ ./scripts/compare_pecj_modes.sh
-
-# 指定构建类型
-BUILD_TYPE=Debug ./scripts/compare_pecj_modes.sh
-```
-
-**环境变量**:
-- `PECJ_DIR`: PECJ 库路径（默认: `/home/cdb/dameng/PECJ`）
-- `BUILD_TYPE`: 构建类型（默认: `Release`）
-- `NUM_JOBS`: 并行编译任务数（默认: CPU 核心数）
-
-**测试步骤**:
-1. 构建 PLUGIN 模式
-2. 构建 INTEGRATED 模式
-3. 运行性能对比测试
-4. 生成对比报告
-
-**对比指标**:
-- 内存占用（RSS, Shared Memory）
-- 执行时间
-- 吞吐量（events/s）
-- API 调用开销
-
-**输出**: 
-- 控制台对比表格
-- 详细日志文件
-
-**适用场景**: 
-- 架构决策支持
-- 性能优化验证
-- 技术文档编写
-
----
-
-### test_lsm_tree.sh
-
-**功能**: LSM Tree 存储引擎的专项测试
-
-**对应测试文件**:
-- 🎯 **主要**: `tests/test_storage_engine.cpp` - LSM Tree 单元测试
-- ✅ `tests/test_time_series_db.cpp` - 时序数据库测试
-
-**用法**:
-```bash
-./scripts/test_lsm_tree.sh
-```
-
-**测试内容**:
-1. 编译项目
-2. 运行所有单元测试
-3. LSM Tree 性能测试（10K 数据点）
-4. 存储结构验证
-
-**输出指标**:
-- 测试通过率
-- 写入时间（ms）
-- 读取时间（ms）
-- SSTable 文件数量
-- WAL 日志状态
-
-**前置条件**: 需要先运行 `build.sh` 完成构建
-
-**适用场景**: 
-- 存储引擎开发和调试
-- 持久化功能验证
-- 性能回归测试
-
----
-
-## 📊 脚本使用流程图
-
-```
-┌─────────────────┐
-│  初次使用？     │
-└────────┬────────┘
-         │
-         ├─ 是 ──→ 1. ./scripts/build.sh
-         │         2. ./scripts/run_demo.sh (选择 Demo 1)
-         │
-         ├─ 否 ──→ 根据需求选择：
-         │
-         ├─ 开发测试 ──→ ./scripts/build_and_test.sh
-         │
-         ├─ 性能评估 ──→ ./scripts/run_high_disorder_demo.sh all
-         │              ./scripts/benchmark_disorder.sh
-         │
-         ├─ 功能演示 ──→ ./scripts/demo_disorder_showcase.sh
-         │
-         ├─ 架构对比 ──→ ./scripts/compare_pecj_modes.sh
-         │
-         └─ 存储测试 ──→ ./scripts/test_lsm_tree.sh
-```
+### 🧪 [测试脚本](./test/)
+性能对比和功能测试
+
+| 脚本 | 功能 | 对应测试 | 运行时间 |
+|------|------|---------|---------|
+| **compare_pecj_modes.sh** | PECJ 模式对比 | benchmarks/pecj_integrated_vs_plugin_benchmark | ~10 分钟 |
+| **test_lsm_tree.sh** | LSM Tree 测试 | tests/test_storage_engine | ~5 分钟 |
+
+👉 [查看测试脚本详细说明](./test/README.md)
 
 ---
 
@@ -424,170 +76,112 @@ BUILD_TYPE=Debug ./scripts/compare_pecj_modes.sh
 
 ```bash
 # 1. 构建项目
-cd /path/to/sageTSDB
-./scripts/build.sh
+./scripts/build/build.sh
 
-# 2. 运行第一个演示
-./scripts/run_demo.sh
+# 2. 运行基础演示
+./scripts/demo/run_demo.sh
 # 选择 "1) Basic Replay Demo"
-```
-
-### 场景 2: 完整功能演示（15 分钟）
-
-```bash
-# 运行预配置的乱序展示
-./scripts/demo_disorder_showcase.sh
-```
-
-### 场景 3: 性能评估（30 分钟）
-
-```bash
-# 运行完整的乱序测试套件
-./scripts/run_high_disorder_demo.sh all
-
-# 或运行系统化的基准测试
-./scripts/benchmark_disorder.sh
-```
-
-### 场景 4: 开发和调试
-
-```bash
-# 构建并运行所有测试
-./scripts/build_and_test.sh
-
-# 测试 LSM Tree 存储引擎
-./scripts/test_lsm_tree.sh
 ```
 
 ---
 
-## 📝 示例程序与脚本对应关系总览
+### 场景 2: 性能评估（30 分钟）
 
-| 示例程序 | 对应脚本 | 功能说明 |
-|---------|---------|---------|
-| **persistence_example.cpp** | `build_and_test.sh` | 持久化和检查点测试 |
-| **plugin_usage_example.cpp** | `build_plugins.sh` | 插件系统使用演示 |
-| **table_design_demo.cpp** | `build_and_test.sh` | 表设计和数据操作 |
-| **window_scheduler_demo.cpp** | `build.sh` | 窗口调度机制 |
-| **pecj_replay_demo.cpp** | `run_demo.sh` | 基础流 Join 演示 |
-| **integrated_demo.cpp** | `run_demo.sh` | PECJ + 故障检测集成 |
-| **performance_benchmark.cpp** | `run_demo.sh` | 性能基准测试 |
-| **deep_integration_demo.cpp** | `run_high_disorder_demo.sh`<br>`demo_disorder_showcase.sh`<br>`benchmark_disorder.sh` | 深度集成乱序处理 |
-| **pecj_integrated_vs_plugin_benchmark.cpp** | `compare_pecj_modes.sh` | PECJ 模式性能对比 |
-| **pecj_shj_comparison_demo.cpp** | `build.sh` | PECJ 算子对比 |
+```bash
+# 1. 乱序处理能力测试
+./scripts/demo/run_disorder_demo.sh benchmark
 
-**测试文件**:
-| 测试文件 | 对应脚本 | 功能说明 |
-|---------|---------|---------|
-| **test_storage_engine.cpp** | `test_lsm_tree.sh` | LSM Tree 存储引擎测试 |
-| **test_*.cpp** (其他测试) | `build_and_test.sh` | 各种单元测试 |
+# 2. PECJ 模式对比
+./scripts/test/compare_pecj_modes.sh
+
+# 3. 可视化结果
+cd examples/visualization
+python3 visualize_timing.py
+```
+
+---
+
+### 场景 3: 开发测试（10 分钟）
+
+```bash
+# 1. 构建并测试
+./scripts/build/build_and_test.sh
+
+# 2. 运行存储引擎测试
+./scripts/test/test_lsm_tree.sh
+```
+
+---
+
+### 场景 4: 功能演示（15 分钟）
+
+```bash
+# 1. 乱序处理快速演示
+./scripts/demo/run_disorder_demo.sh quick
+
+# 2. 算法对比演示
+./scripts/demo/run_pecj_shj_comparison.sh
+```
+
+---
+
+## 📖 脚本与示例对应关系
+
+| 示例程序 | 对应脚本 | 目录 |
+|---------|---------|------|
+| **基础示例** |
+| basic/persistence_example | build/build_and_test.sh | build/ |
+| basic/table_design_demo | build/build_and_test.sh | build/ |
+| basic/window_scheduler_demo | build/build.sh | build/ |
+| **集成示例** |
+| integration/pecj_replay_demo | demo/run_demo.sh | demo/ |
+| integration/integrated_demo | demo/run_demo.sh | demo/ |
+| integration/deep_integration_demo | demo/run_disorder_demo.sh | demo/ |
+| integration/pecj_shj_comparison_demo | demo/run_pecj_shj_comparison.sh | demo/ |
+| **性能测试** |
+| benchmarks/performance_benchmark | demo/run_demo.sh | demo/ |
+| benchmarks/pecj_integrated_vs_plugin_benchmark | test/compare_pecj_modes.sh | test/ |
+| **插件系统** |
+| plugins/plugin_usage_example | build/build_plugins.sh | build/ |
 
 ---
 
 ## 🔧 常见问题
 
 ### Q: 如何查看脚本的详细用法？
-**A**: 大多数脚本支持 `--help` 参数，或直接查看脚本内部的注释：
-```bash
-./scripts/run_demo.sh --help
-head -n 50 ./scripts/run_high_disorder_demo.sh
-```
 
-### Q: PECJ 数据集在哪里？
-**A**: 脚本会自动搜索以下位置：
-- `../../../PECJ/benchmark/datasets/` (相对于 sageTSDB)
-- `./examples/datasets/` (本地拷贝)
-- `/home/cdb/dameng/PECJ/benchmark/datasets/` (绝对路径)
+**A**: 每个脚本都支持 --help 参数，或直接查看对应目录的 README
 
-你也可以在运行演示时手动指定：
-```bash
-./build/examples/pecj_replay_demo --s-file /path/to/sTuple.csv --r-file /path/to/rTuple.csv
-```
+### Q: 数据集文件在哪里？
+
+**A**: 位于 examples/datasets/ 或 PECJ/benchmark/datasets/
 
 ### Q: 构建失败怎么办？
-**A**: 检查以下几点：
-1. CMake 版本 ≥ 3.15
-2. g++ 支持 C++17
-3. PECJ 库路径正确：`PECJ_DIR=/path/to/PECJ ./scripts/build.sh`
-4. 查看详细错误日志
 
-### Q: 如何并行运行多个测试？
-**A**: 不建议并行运行脚本，因为它们可能共享构建目录。如需并行测试，为每个测试创建独立的构建目录：
-```bash
-BUILD_DIR=build_test1 ./scripts/build.sh
-BUILD_DIR=build_test2 ./scripts/build.sh
-```
-
-### Q: 如何清理构建产物？
-**A**: 
-```bash
-# 清理构建目录
-rm -rf build/
-
-# 清理测试数据
-rm -rf build/sage_tsdb_data/
-
-# 清理基准测试结果
-rm -rf build/benchmark_results/
-```
+**A**: 清理 build/ 目录后重新运行 ./scripts/build/build.sh
 
 ---
 
-## 📖 相关文档
+## 📊 重构说明
 
-- **[示例程序文档](../examples/README.md)** - 示例程序详细说明
-- **[Deep Integration Demo](../docs/examples/README_DEEP_INTEGRATION_DEMO.md)** - 深度集成演示文档
-- **[High Disorder Demo](../docs/examples/README_HIGH_DISORDER_DEMO.md)** - 高乱序测试文档
-- **[sageTSDB 设计文档](../docs/DESIGN_DOC_SAGETSDB_PECJ.md)** - 系统设计文档
-- **[PECJ 计算引擎](../docs/PECJ_COMPUTE_ENGINE_IMPLEMENTATION.md)** - PECJ 集成实现
+**重构时间**: 2026-01-04  
+**重构方案**: 按功能分类重组
 
----
-
-## 🤝 贡献指南
-
-如果你添加了新的脚本：
-
-1. **命名规范**: 使用描述性名称，如 `run_xxx_demo.sh` 或 `test_xxx.sh`
-2. **脚本头部**: 添加清晰的注释说明功能、用法和参数
-3. **更新文档**: 在本 README 中添加相应条目
-4. **标注对应示例**: 明确指出脚本对应的 `examples/` 文件
-5. **测试**: 确保脚本在干净环境下可以正常运行
-
-**脚本模板**:
-```bash
-#!/bin/bash
-# <script_name>.sh
-# 功能说明
-#
-# 对应示例: examples/<demo_name>.cpp
-#
-# 用法:
-#   ./scripts/<script_name>.sh [options]
-#
-# 参数:
-#   --option1    说明
-#   --option2    说明
-
-set -e  # 遇到错误立即退出
-
-# 颜色定义
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-NC='\033[0m'
-
-# ... 脚本内容 ...
-```
+**变更内容**:
+- ✅ 创建 build/, demo/, test/ 三个功能目录
+- ✅ 合并 3 个重复的乱序脚本为 demo/run_disorder_demo.sh
+- ✅ 更新所有脚本路径以适配新的 examples/ 结构
+- ✅ 删除过时的 CLEANUP_SUMMARY.md 文档
+- ✅ 为每个子目录创建详细的 README 文档
 
 ---
 
 ## 📞 获取帮助
 
-- 查看 [完整文档](../docs/)
-- 查看源代码中的详细注释
-- 提交 Issue 或 Pull Request
+- 📖 查看子目录 README
+- 💬 查看脚本中的详细注释
+- 📚 查看示例程序文档 ../examples/README.md
 
 ---
 
-**最后更新**: 2025-12-29  
-**维护者**: sageTSDB 开发团队
+**脚本工具使用愉快！** 🎉

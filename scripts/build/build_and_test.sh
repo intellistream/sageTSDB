@@ -168,7 +168,7 @@ run_quick_test() {
     print_info "Running pecj_replay_demo with 1000 tuples..."
     
     # 运行并捕获输出
-    local output=$(./examples/pecj_replay_demo \
+    local output=$(./examples/integration/pecj_replay_demo \
         --s-file "${PECJ_DIR}/benchmark/datasets/sTuple.csv" \
         --r-file "${PECJ_DIR}/benchmark/datasets/rTuple.csv" \
         --max-tuples 1000 2>&1)
@@ -202,19 +202,19 @@ show_usage_instructions() {
 
 1. 运行交互式 demo 菜单:
    ${GREEN}cd $SAGE_TSDB_DIR
-   ./examples/run_demo.sh${NC}
+   ./examples/integration/integrated_demo.sh${NC}
 
 2. 直接运行各个 demo:
    ${GREEN}cd $BUILD_DIR
    
    # 基础演示（5 分钟）
-   ./examples/pecj_replay_demo --max-tuples 5000
+   ./examples/integration/pecj_replay_demo --max-tuples 5000
    
    # 集成演示（10 分钟）
-   ./examples/integrated_demo --max-tuples 10000 --detection zscore
+   ./examples/integration/integrated_demo --max-tuples 10000 --detection zscore
    
    # 性能测试（15-30 分钟）
-   ./examples/performance_benchmark${NC}
+   ./examples/benchmarks/performance_benchmark${NC}
 
 3. 查看完整文档:
    ${GREEN}cat examples/README_PECJ_DEMO.md
@@ -222,7 +222,7 @@ show_usage_instructions() {
    cat examples/DEMO_SUMMARY.md${NC}
 
 4. 快速演示（推荐首次使用）:
-   ${GREEN}./examples/run_demo.sh --quick${NC}
+   ${GREEN}./examples/integration/integrated_demo.sh --quick${NC}
 
 ${BLUE}提示:${NC} 所有 demo 程序都支持 --help 选项查看详细参数。
 

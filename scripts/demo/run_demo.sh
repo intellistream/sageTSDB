@@ -55,7 +55,7 @@ check_prerequisites() {
     fi
     
     # 检查可执行文件
-    if [ ! -f "$BUILD_DIR/examples/pecj_replay_demo" ]; then
+    if [ ! -f "$BUILD_DIR/examples/integration/pecj_replay_demo" ]; then
         print_error "Demo executables not found. Please build the project."
         exit 1
     fi
@@ -91,7 +91,7 @@ show_menu() {
 run_basic_replay() {
     print_info "Running Basic Replay Demo..."
     cd $BUILD_DIR
-    ./examples/pecj_replay_demo \
+    ./examples/integration/pecj_replay_demo \
         --s-file "${DATA_DIR}/sTuple.csv" \
         --r-file "${DATA_DIR}/rTuple.csv" \
         --max-tuples 5000 \
@@ -102,7 +102,7 @@ run_basic_replay() {
 run_integrated_demo() {
     print_info "Running Integrated Demo (PECJ + Fault Detection)..."
     cd $BUILD_DIR
-    ./examples/integrated_demo \
+    ./examples/integration/integrated_demo \
         --s-file "${DATA_DIR}/sTuple.csv" \
         --r-file "${DATA_DIR}/rTuple.csv" \
         --max-tuples 10000 \
@@ -123,7 +123,7 @@ run_performance_benchmark() {
     echo
     if [[ $REPLY =~ ^[Yy]$ ]]; then
         cd $BUILD_DIR
-        ./examples/performance_benchmark \
+        ./examples/benchmarks/performance_benchmark \
             --s-file "${DATA_DIR}/sTuple.csv" \
             --r-file "${DATA_DIR}/rTuple.csv" \
             --output benchmark_results.csv
@@ -146,7 +146,7 @@ run_stock_demo() {
     fi
     
     cd $BUILD_DIR
-    ./examples/integrated_demo \
+    ./examples/integration/integrated_demo \
         --s-file "${stock_dir}/sb_1000ms_1tLowDelayData_short.csv" \
         --r-file "${stock_dir}/cj_1000ms_1tLowDelayData_short.csv" \
         --detection zscore \
@@ -156,7 +156,7 @@ run_stock_demo() {
 run_high_throughput() {
     print_info "Running High Throughput Demo (SHJ operator, 8 threads)..."
     cd $BUILD_DIR
-    ./examples/pecj_replay_demo \
+    ./examples/integration/pecj_replay_demo \
         --s-file "${DATA_DIR}/sTuple.csv" \
         --r-file "${DATA_DIR}/rTuple.csv" \
         --max-tuples 50000 \
@@ -168,7 +168,7 @@ run_realtime_simulation() {
     print_info "Running Realtime Simulation Demo..."
     print_warning "This demo replays data with real timestamps (slower but more realistic)"
     cd $BUILD_DIR
-    ./examples/pecj_replay_demo \
+    ./examples/integration/pecj_replay_demo \
         --s-file "${DATA_DIR}/sTuple.csv" \
         --r-file "${DATA_DIR}/rTuple.csv" \
         --max-tuples 2000 \
@@ -182,8 +182,8 @@ run_custom_command() {
     echo "Available programs: pecj_replay_demo, integrated_demo, performance_benchmark"
     echo ""
     echo "Example commands:"
-    echo "  ./examples/pecj_replay_demo --help"
-    echo "  ./examples/integrated_demo --max-tuples 5000"
+    echo "  ./examples/integration/pecj_replay_demo --help"
+    echo "  ./examples/integration/integrated_demo --max-tuples 5000"
     echo ""
     read -p "Enter command: " custom_cmd
     

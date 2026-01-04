@@ -1,0 +1,2 @@
+# 不忽略 scripts/build 目录（这是脚本目录，不是编译目录）
+!build/
