@@ -17,7 +17,7 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$(dirname "$SCRIPT_DIR")")"
 BUILD_DIR="${PROJECT_ROOT}/build"
-DEMO_BIN="${BUILD_DIR}/examples/integration/deep_integration_demo"
+DEMO_BIN="${BUILD_DIR}/examples/deep_integration_demo"
 DATASETS_DIR="${PROJECT_ROOT}/examples/datasets"
 RESULTS_DIR="${BUILD_DIR}/disorder_results"
 
@@ -98,9 +98,10 @@ run_quick_demo() {
             --r-file "${DATASETS_DIR}/rTuple.csv" \
             --max-s 10000 \
             --max-r 10000 \
+            --disorder true \
             --disorder-ratio "$disorder_rate" \
-            --operator IMA \
-            --window-ms 1000
+            --window-us 1000000 \
+            --slide-us 500000
         
         echo ""
     done
@@ -130,16 +131,16 @@ run_full_demo() {
             --r-file "${DATASETS_DIR}/rTuple.csv" \
             --max-s "$max_s" \
             --max-r "$max_r" \
+            --disorder true \
             --disorder-ratio "$disorder" \
-            --operator IMA \
-            --window-ms 1000 \
-            --output "${RESULTS_DIR}/disorder_${disorder}.txt"
+            --window-us 1000000 \
+            --slide-us 500000
         
         echo ""
     done
     
     print_info "Full test completed!"
-    print_info "Results saved in: $RESULTS_DIR"
+    print_info "Results can be analyzed from console output"
 }
 
 run_benchmark() {
@@ -150,7 +151,7 @@ run_benchmark() {
     
     local benchmark_file="${RESULTS_DIR}/disorder_benchmark_$(date +%Y%m%d_%H%M%S).csv"
     
-    echo "DisorderRate,MaxS,MaxR,Throughput,Latency,MemoryMB" > "$benchmark_file"
+    echo "DisorderRate,MaxS,MaxR,Description" > "$benchmark_file"
     
     local disorder_rates=(0.0 0.1 0.2 0.3 0.4 0.5)
     local data_scales=(
@@ -167,22 +168,18 @@ run_benchmark() {
             local rate_percent=$(echo "$disorder * 100" | bc)
             print_info "Testing ${rate_percent}% disorder with $desc dataset..."
             
-            local output_file="${RESULTS_DIR}/bench_${disorder}_${max_s}.txt"
-            
             "$DEMO_BIN" \
                 --s-file "${DATASETS_DIR}/sTuple.csv" \
                 --r-file "${DATASETS_DIR}/rTuple.csv" \
                 --max-s "$max_s" \
                 --max-r "$max_r" \
+                --disorder true \
                 --disorder-ratio "$disorder" \
-                --operator IMA \
-                --window-ms 1000 \
-                --output "$output_file"
+                --window-us 1000000 \
+                --slide-us 500000 \
+                --quiet
             
-            # Extract metrics (simplified, adjust based on actual output format)
-            if [ -f "$output_file" ]; then
-                echo "$disorder,$max_s,$max_r,0,0,0" >> "$benchmark_file"
-            fi
+            echo "$disorder,$max_s,$max_r,$desc" >> "$benchmark_file"
             
             sleep 1
         done

@@ -56,7 +56,7 @@ int main() {
     system(("mkdir -p " + data_dir).c_str());
     
     // Create table manager
-    auto table_manager = std::make_unique<TableManager>(data_dir);
+    auto table_manager = std::make_unique<sage_tsdb::TableManager>(data_dir);
     
     // Create stream tables
     TableConfig table_config;

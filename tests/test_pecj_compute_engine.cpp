@@ -266,8 +266,8 @@ TEST_F(PECJComputeEngineTest, ExecuteWindowJoinBasic) {
     insertTestData(base_ts, 100);
     
     // Execute window join
-    TimeRange range(base_ts, base_ts + 1000000);
-    auto status = engine.executeWindowJoin(1, range);
+    compute::TimeRange time_range(base_ts, base_ts + 1000000);
+    auto status = engine.executeWindowJoin(1, time_range);
     
     EXPECT_TRUE(status.success) << "Window join should succeed: " << status.error;
     EXPECT_GT(status.input_s_count, 0) << "Should have S tuples";
@@ -284,8 +284,8 @@ TEST_F(PECJComputeEngineTest, ExecuteWindowJoinWithAQPOperator) {
     insertTestData(base_ts, 100);
     
     // Execute window join
-    TimeRange range(base_ts, base_ts + 1000000);
-    auto status = engine.executeWindowJoin(1, range);
+    compute::TimeRange time_range(base_ts, base_ts + 1000000);
+    auto status = engine.executeWindowJoin(1, time_range);
     
     EXPECT_TRUE(status.success);
     EXPECT_TRUE(status.used_aqp) << "AQP should be used for MeanAQP operator";
@@ -297,7 +297,7 @@ TEST_F(PECJComputeEngineTest, ExecuteWindowJoinInvalidRange) {
     engine.initialize(config, db_.get(), nullptr);
     
     // Invalid time range (end before start)
-    TimeRange invalid_range(2000000, 1000000);
+    compute::TimeRange invalid_range(2000000, 1000000);
     auto status = engine.executeWindowJoin(1, invalid_range);
     
     EXPECT_FALSE(status.success) << "Should fail with invalid time range";
@@ -307,8 +307,8 @@ TEST_F(PECJComputeEngineTest, ExecuteWithoutInitialization) {
     PECJComputeEngine engine;
     // Don't initialize
     
-    TimeRange range(1000000, 2000000);
-    auto status = engine.executeWindowJoin(1, range);
+    compute::TimeRange time_range(1000000, 2000000);
+    auto status = engine.executeWindowJoin(1, time_range);
     
     EXPECT_FALSE(status.success) << "Should fail without initialization";
     EXPECT_FALSE(status.error.empty());

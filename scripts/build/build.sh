@@ -11,29 +11,20 @@ NC='\033[0m' # No Color
 
 echo -e "${GREEN}Building sageTSDB...${NC}"
 
-# 确定构建目录：优先使用 .sage/build/sage_tsdb（统一构建目录）
-# 如果在 middleware 上下文中构建，会由父 CMake 管理
-# 如果独立构建（开发/测试），则使用本地 build/
+# 确定项目根目录和构建目录
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# 路径: sageTSDB -> sage_tsdb -> components -> middleware -> sage -> src -> sage-middleware -> packages -> SAGE
-SAGE_ROOT="$(cd "${SCRIPT_DIR}/../../../../../../../.." && pwd)"
+PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
-if [ -d "${SAGE_ROOT}/.sage" ]; then
-    # 在 SAGE 项目根目录下，使用统一构建目录
-    BUILD_DIR="${SAGE_ROOT}/.sage/build/sage_tsdb"
-    echo -e "${YELLOW}使用统一构建目录: ${BUILD_DIR}${NC}"
-else
-    # 独立构建（子模块开发模式）
-    BUILD_DIR="${SCRIPT_DIR}/build"
-    echo -e "${YELLOW}使用本地构建目录: ${BUILD_DIR}${NC}"
-fi
+# 使用项目根目录下的 build/ 目录
+BUILD_DIR="${PROJECT_ROOT}/build"
+echo -e "${YELLOW}使用构建目录: ${BUILD_DIR}${NC}"
 
 # Create build directory
 if [ ! -d "$BUILD_DIR" ]; then
     mkdir -p "$BUILD_DIR"
 fi
 
-cd "$SCRIPT_DIR"
+cd "$PROJECT_ROOT"
 
 # Configure
 echo -e "${YELLOW}Configuring CMake...${NC}"
