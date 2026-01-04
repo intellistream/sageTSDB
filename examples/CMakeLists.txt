@@ -1,10 +1,19 @@
 cmake_minimum_required(VERSION 3.15)
 
 # Examples - optional demonstrations of sageTSDB usage
+# Reorganized into functional categories:
+#   - basic/          : Core functionality demos
+#   - integration/    : PECJ integration examples
+#   - benchmarks/     : Performance testing
+#   - plugins/        : Plugin system examples
+
+# ============================================================================
+# Basic Examples
+# ============================================================================
 
 # Persistence example
 add_executable(persistence_example
-    persistence_example.cpp
+    basic/persistence_example.cpp
 )
 
 target_link_libraries(persistence_example
@@ -14,7 +23,7 @@ target_link_libraries(persistence_example
 
 # Table design demo
 add_executable(table_design_demo
-    table_design_demo.cpp
+    basic/table_design_demo.cpp
 )
 
 target_link_libraries(table_design_demo
@@ -25,7 +34,7 @@ target_link_libraries(table_design_demo
 # WindowScheduler demo (only if compute library is built)
 if(TARGET sage_tsdb_compute)
     add_executable(window_scheduler_demo
-        window_scheduler_demo.cpp
+        basic/window_scheduler_demo.cpp
     )
     
     target_link_libraries(window_scheduler_demo
@@ -38,30 +47,14 @@ if(TARGET sage_tsdb_compute)
     message(STATUS "Building window_scheduler_demo")
 endif()
 
-# Deep Integration Demo (only if compute library is built in INTEGRATED mode)
-if(TARGET sage_tsdb_compute AND PECJ_MODE STREQUAL "INTEGRATED")
-    add_executable(deep_integration_demo
-        deep_integration_demo.cpp
-    )
-    
-    target_link_libraries(deep_integration_demo
-        PRIVATE
-            sage_tsdb_core
-            sage_tsdb_compute
-    )
-    
-    target_compile_definitions(deep_integration_demo
-        PRIVATE
-            PECJ_MODE_INTEGRATED
-    )
-    
-    message(STATUS "Building deep_integration_demo (PECJ Integrated Mode)")
-endif()
+# ============================================================================
+# Plugin System Examples
+# ============================================================================
 
 # Plugin usage example (only if plugins are built)
 if(TARGET sage_tsdb_plugins)
     add_executable(plugin_usage_example
-        plugin_usage_example.cpp
+        plugins/plugin_usage_example.cpp
     )
     
     target_link_libraries(plugin_usage_example
@@ -74,14 +67,14 @@ if(TARGET sage_tsdb_plugins)
 endif()
 
 # ============================================================================
-# PECJ Integration Demos (only if PECJ plugin is available)
+# PECJ Integration Examples
 # ============================================================================
 if(TARGET sage_tsdb_plugins)
     message(STATUS "Building PECJ integration demos")
     
     # 1. PECJ Replay Demo - Basic stream join demonstration
     add_executable(pecj_replay_demo
-        pecj_replay_demo.cpp
+        integration/pecj_replay_demo.cpp
     )
     
     target_link_libraries(pecj_replay_demo
@@ -97,7 +90,7 @@ if(TARGET sage_tsdb_plugins)
     
     # 2. Integrated Demo - PECJ + Fault Detection
     add_executable(integrated_demo
-        integrated_demo.cpp
+        integration/integrated_demo.cpp
     )
     
     target_link_libraries(integrated_demo
@@ -110,27 +103,31 @@ if(TARGET sage_tsdb_plugins)
         PRIVATE
             ${CMAKE_SOURCE_DIR}/include
     )
-    
-    # 3. Performance Benchmark - Comprehensive performance testing
-    add_executable(performance_benchmark
-        performance_benchmark.cpp
-    )
-    
-    target_link_libraries(performance_benchmark
-        PRIVATE
-            sage_tsdb_core
-            sage_tsdb_plugins
-    )
-    
-    target_include_directories(performance_benchmark
-        PRIVATE
-            ${CMAKE_SOURCE_DIR}/include
-    )
+
+    # 3. Deep Integration Demo (only if compute library is built in INTEGRATED mode)
+    if(TARGET sage_tsdb_compute AND PECJ_MODE STREQUAL "INTEGRATED")
+        add_executable(deep_integration_demo
+            integration/deep_integration_demo.cpp
+        )
+        
+        target_link_libraries(deep_integration_demo
+            PRIVATE
+                sage_tsdb_core
+                sage_tsdb_compute
+        )
+        
+        target_compile_definitions(deep_integration_demo
+            PRIVATE
+                PECJ_MODE_INTEGRATED
+        )
+        
+        message(STATUS "Building deep_integration_demo (PECJ Integrated Mode)")
+    endif()
 
     # 4. PECJ vs SHJ Comparison Demo (only in INTEGRATED mode with compute library)
     if(PECJ_MODE STREQUAL "INTEGRATED" AND TARGET sage_tsdb_compute)
         add_executable(pecj_shj_comparison_demo
-            pecj_shj_comparison_demo.cpp
+            integration/pecj_shj_comparison_demo.cpp
         )
         
         target_link_libraries(pecj_shj_comparison_demo
@@ -154,11 +151,44 @@ if(TARGET sage_tsdb_plugins)
         list(APPEND EXAMPLE_TARGETS pecj_shj_comparison_demo)
         message(STATUS "  - pecj_shj_comparison_demo")
     endif()
+    
+    # Add PECJ integration demos to install targets
+    list(APPEND EXAMPLE_TARGETS 
+        pecj_replay_demo 
+        integrated_demo
+    )
+    
+    message(STATUS "  - pecj_replay_demo")
+    message(STATUS "  - integrated_demo")
+    
+endif()
 
-    # 5. PECJ Integrated vs Plugin Mode Benchmark
+# ============================================================================
+# Performance Benchmarks
+# ============================================================================
+if(TARGET sage_tsdb_plugins)
+    message(STATUS "Building performance benchmarks")
+    
+    # 1. Performance Benchmark - Comprehensive performance testing
+    add_executable(performance_benchmark
+        benchmarks/performance_benchmark.cpp
+    )
+    
+    target_link_libraries(performance_benchmark
+        PRIVATE
+            sage_tsdb_core
+            sage_tsdb_plugins
+    )
+    
+    target_include_directories(performance_benchmark
+        PRIVATE
+            ${CMAKE_SOURCE_DIR}/include
+    )
+
+    # 2. PECJ Integrated vs Plugin Mode Benchmark
     # This benchmark compares performance between Integrated Mode and Plugin Mode
     add_executable(pecj_integrated_vs_plugin_benchmark
-        pecj_integrated_vs_plugin_benchmark.cpp
+        benchmarks/pecj_integrated_vs_plugin_benchmark.cpp
     )
     
     target_link_libraries(pecj_integrated_vs_plugin_benchmark
@@ -187,29 +217,26 @@ if(TARGET sage_tsdb_plugins)
         message(STATUS "Building pecj_integrated_vs_plugin_benchmark (Plugin Mode Only)")
     endif()
     
-    list(APPEND EXAMPLE_TARGETS pecj_integrated_vs_plugin_benchmark)
-    message(STATUS "  - pecj_integrated_vs_plugin_benchmark")
-
-    
-    # Add PECJ demos to install targets
     list(APPEND EXAMPLE_TARGETS 
-        pecj_replay_demo 
-        integrated_demo 
         performance_benchmark
+        pecj_integrated_vs_plugin_benchmark
     )
     
-    message(STATUS "  - pecj_replay_demo")
-    message(STATUS "  - integrated_demo")
     message(STATUS "  - performance_benchmark")
+    message(STATUS "  - pecj_integrated_vs_plugin_benchmark")
     
     # Copy demo configuration files
     configure_file(
-        ${CMAKE_CURRENT_SOURCE_DIR}/demo_configs.json
+        ${CMAKE_CURRENT_SOURCE_DIR}/benchmarks/configs/demo_configs.json
         ${CMAKE_CURRENT_BINARY_DIR}/demo_configs.json
         COPYONLY
     )
     
 endif()
+
+# ============================================================================
+# Installation
+# ============================================================================
 
 # Install examples (optional)
 set(EXAMPLE_TARGETS persistence_example table_design_demo)
@@ -224,9 +251,45 @@ install(TARGETS ${EXAMPLE_TARGETS}
     RUNTIME DESTINATION bin/examples
 )
 
-# Install demo documentation and configs
+# Install demo documentation
 install(FILES 
     README.md
-    demo_configs.json
     DESTINATION share/doc/sageTSDB/examples
+)
+
+# Install subdirectory READMEs
+install(FILES 
+    basic/README.md
+    DESTINATION share/doc/sageTSDB/examples/basic
+)
+
+install(FILES 
+    integration/README.md
+    DESTINATION share/doc/sageTSDB/examples/integration
+)
+
+install(FILES 
+    benchmarks/README.md
+    DESTINATION share/doc/sageTSDB/examples/benchmarks
+)
+
+install(FILES 
+    plugins/README.md
+    DESTINATION share/doc/sageTSDB/examples/plugins
+)
+
+install(FILES 
+    visualization/README.md
+    DESTINATION share/doc/sageTSDB/examples/visualization
+)
+
+install(FILES 
+    datasets/README.md
+    DESTINATION share/doc/sageTSDB/examples/datasets
+)
+
+# Install config files
+install(FILES 
+    benchmarks/configs/demo_configs.json
+    DESTINATION share/sageTSDB/examples/configs
 )

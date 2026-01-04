@@ -1,0 +1,19 @@
+# 忽略示例程序运行产生的输出文件
+outputs/
+
+# 忽略临时生成的结果文件（如果在根目录运行）
+*.json
+*.txt
+*.png
+
+# 但保留配置文件
+!benchmarks/configs/*.json
+
+# 保留数据集
+!datasets/
+
+# 构建产物
+*.o
+*.so
+*.a
+*.exe
