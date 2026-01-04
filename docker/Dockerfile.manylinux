@@ -1,0 +1,30 @@
+FROM quay.io/pypa/manylinux2014_x86_64:latest
+
+# Install build dependencies
+RUN yum install -y \
+    cmake3 \
+    gcc-c++ \
+    make \
+    openssl-devel \
+    zlib-devel \
+    && ln -sf /usr/bin/cmake3 /usr/bin/cmake \
+    && yum clean all
+
+# Set environment variables for old ABI compatibility
+ENV _GLIBCXX_USE_CXX11_ABI=0
+
+WORKDIR /workspace
+
+# Copy source code
+COPY . /workspace/
+
+# Build script
+CMD ["/bin/bash", "-c", "\
+    for PYBIN in /opt/python/cp{310,311,312}*/bin; do \
+        ${PYBIN}/pip install --upgrade pip build scikit-build-core pybind11; \
+        ${PYBIN}/python -m build --wheel -o /tmp/wheels; \
+    done && \
+    for whl in /tmp/wheels/*.whl; do \
+        auditwheel repair $whl -w /workspace/dist; \
+    done \
+"]
