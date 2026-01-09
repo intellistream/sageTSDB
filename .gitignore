@@ -6,15 +6,24 @@ build_window_scheduler/
 build_plugin/
 cmake-build-debug/
 cmake-build-release/
+build.log
 
-# Python
+# Python build artifacts
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
+*.egg-info/
 .Python
 env/
 venv/
+dist/
+*.whl
+*.log
+
+# Python packaging
+pip-wheel-metadata/
+.eggs/
 
 # IDE
 .vscode/

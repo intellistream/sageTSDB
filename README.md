@@ -2,7 +2,19 @@
 
 **High-Performance Time Series Database with C++ Core**
 
+[![PyPI version](https://badge.fury.io/py/isage-tsdb.svg)](https://pypi.org/project/isage-tsdb/)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 sageTSDB is a high-performance time series database designed for streaming data processing with support for out-of-order data, window-based operations, and pluggable algorithms.
+
+## 🚀 Quick Install
+
+```bash
+pip install isage-tsdb
+```
+
+**Requirements**: Ubuntu 22.04+ (GLIBC 2.35+) or equivalent Linux distribution.
 
 ## 🌟 Features
 
@@ -68,7 +80,46 @@ sageTSDB/
 - **docs/**: All documentation (removed duplicate/outdated docs)
 - **scripts/**: All build scripts in one place (removed outdated scripts)
 
-## 📦 Building
+## 📦 Quick Start (Python)
+
+### Installation
+
+```bash
+# Install from PyPI (recommended)
+pip install isage-tsdb
+
+# Verify installation
+python -c "import sage_tsdb; print(sage_tsdb.__version__)"
+```
+
+**System Requirements**: 
+- Ubuntu 22.04+ (GLIBC 2.35+) or equivalent
+- Python 3.10+
+
+### Basic Usage
+
+```python
+import sage_tsdb
+
+# Create database
+db = sage_tsdb.TimeSeriesDB()
+
+# Insert data
+db.add(
+    timestamp=1000000,  # microseconds
+    value=23.5,
+    tags={"sensor": "temp_01", "location": "room_a"},
+    fields={"unit": "celsius"}
+)
+
+# Query data
+data = db.query(start=0, end=3000000)
+print(f"Found {len(data)} data points")
+```
+
+For more examples, see [Python Examples](#python-usage) below.
+
+## 📦 Building from Source
 
 ### Prerequisites
 
