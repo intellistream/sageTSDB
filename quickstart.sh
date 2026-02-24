@@ -64,6 +64,13 @@ else
     echo -e "${YELLOW}⚠  pre-push template not found, skipping${NC}"
 fi
 
+# Install post-commit hook (auto-bump version)
+if [ -f "$TEMPLATE_DIR/post-commit" ]; then
+    cp "$TEMPLATE_DIR/post-commit" "$HOOKS_DIR/post-commit"
+    chmod +x "$HOOKS_DIR/post-commit"
+    echo -e "${GREEN}✓ Installed post-commit hook${NC}"
+fi
+
 echo ""
 
 # Step 2: Check dependencies
