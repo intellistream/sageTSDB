@@ -24,6 +24,10 @@ examples/                  # Demo 程序 (persistence, PECJ 集成等)
 - **PECJ 无状态化**：`PECJComputeEngine` 是纯计算函数，不持有数据缓冲区
 - **资源统一管理**：线程/内存/GPU 由 `ResourceManager` 分配，通过 `ResourceHandle` 使用
 
+## Environment Rule
+
+- Do not create new local virtual environments (`venv`/`.venv`); use the existing configured Python environment.
+
 ## Build Commands
 
 ```bash
