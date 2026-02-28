@@ -1,19 +1,20 @@
 #!/usr/bin/env bash
-# Post-commit hook for sageLLM repositories
-# Automatically bumps BUILD version (X.Y.Z.BUILD → X.Y.Z.BUILD+1) after each commit.
-# Version source of truth: src/<package>/_version.py
+# Post-commit hook — auto-bump BUILD version digit after each commit
 #
-# This runs AFTER commit, amends it with the bumped version,
-# so the pre-push hook never needs to handle version bumping.
+# Version format: X.Y.Z  → X.Y.Z.1  (first build counter)
+#                 X.Y.Z.N → X.Y.Z.N+1
+#
+# Single source of truth: src/<package>/_version.py (or root if no src/)
+# This hook amends the commit in-place; pre-push hook never bumps version.
 
 set -eo pipefail
 
-# Recursion guard: skip if we're already inside an amend
+# Recursion guard
 if [ -f ".git/SAGE_POST_COMMIT_RUNNING" ]; then
     exit 0
 fi
 
-# Allow disabling via environment variable
+# Kill-switch
 if [ "${SAGE_SKIP_VERSION_BUMP:-0}" = "1" ]; then
     exit 0
 fi
@@ -38,33 +39,45 @@ bump_version() {
     return 1
 }
 
-# Find _version.py — single source of truth
+# Find _version.py — search src/ first (standard layout), then root (non-src repos)
 find_version_file() {
-    find src -maxdepth 4 -name '_version.py' \
+    local found
+    found=$(find src -maxdepth 4 -name '_version.py' \
         -not -path '*/.git/*' \
         -not -path '*/dist/*' \
         -not -path '*/.egg-info/*' \
         -not -path '*/build/*' \
+        2>/dev/null | head -1)
+    if [ -n "$found" ]; then
+        echo "$found"
+        return 0
+    fi
+    # Fallback: root-level search (for repos without src/ layout)
+    find . -maxdepth 3 -name '_version.py' \
+        -not -path '*/.git/*' \
+        -not -path '*/dist/*' \
+        -not -path '*/.egg-info/*' \
+        -not -path '*/build/*' \
+        -not -path '*/node_modules/*' \
+        -not -path '*/_cmake_test_compile/*' \
         2>/dev/null | head -1
 }
 
 VERSION_FILE=$(find_version_file)
 if [ -z "$VERSION_FILE" ]; then
-    exit 0  # Not a Python package repo, nothing to do
+    exit 0  # No _version.py found — not a tracked Python package
 fi
 
-# Check if _version.py was already changed in this commit
+# If developer manually touched _version.py in this commit, skip auto-bump
 if git diff --name-only HEAD~1 HEAD 2>/dev/null | grep -q '_version.py'; then
-    exit 0  # Developer manually bumped version, don't override
+    exit 0
 fi
 
-# Read current version from _version.py
 current_version=$(grep -oP '__version__ = "\K[^"]+' "$VERSION_FILE" 2>/dev/null || true)
 if [ -z "$current_version" ]; then
     exit 0
 fi
 
-# Calculate new version
 if ! new_version=$(bump_version "$current_version"); then
     echo -e "${YELLOW}⚠️  Could not auto-bump version (invalid format: $current_version)${NC}"
     exit 0
@@ -72,17 +85,25 @@ fi
 
 echo -e "${BLUE}📦 Auto-bumping version: $current_version → $new_version${NC}"
 
-# Lock to prevent recursion
+# Lock to prevent recursion when we amend
 touch .git/SAGE_POST_COMMIT_RUNNING
 
 # Update _version.py (single source of truth)
 sed -i "s/__version__ = \"${current_version}\"/__version__ = \"${new_version}\"/" "$VERSION_FILE"
 git add "$VERSION_FILE"
 
-# Amend commit with version bump (--no-verify to skip re-triggering hooks)
+# If this repo has a lock_deps.sh script, sync dependency bounds too (sagellm meta)
+if [ -f "scripts/lock_deps.sh" ]; then
+    echo -e "${BLUE}🔒 Syncing dep bounds + constraints.txt...${NC}"
+    bash scripts/lock_deps.sh --update-bounds > /dev/null 2>&1 || {
+        echo -e "${YELLOW}⚠️  lock_deps.sh --update-bounds failed (non-fatal)${NC}"
+    }
+    git add constraints.txt src/sagellm/constraints.txt 2>/dev/null || true
+fi
+
+# Amend commit with the version bump (no new prompt)
 git commit --amend --no-edit --no-verify
 
-# Cleanup
 rm -f .git/SAGE_POST_COMMIT_RUNNING
 
 echo -e "${GREEN}✓ Version bumped to $new_version (commit amended)${NC}"
