@@ -159,3 +159,10 @@ source setup_env.sh  # 配置 LD_LIBRARY_PATH
 - 深度融合总结: `docs/PECJ_DEEP_INTEGRATION_SUMMARY.md`
 - 资源管理: `docs/RESOURCE_MANAGER_GUIDE.md`
 - LSM-Tree 实现: `docs/LSM_TREE_IMPLEMENTATION.md`
+
+## Polyrepo coordination (mandatory)
+
+- This repository is an independent SAGE sub-repository and is developed/released independently.
+- Do not assume sibling source directories exist locally in `intellistream/SAGE`.
+- For cross-repo rollout, publish this repo/package first, then bump the version pin in `SAGE/packages/sage/pyproject.toml` when applicable.
+- Do not add local editable installs of other SAGE sub-packages in setup scripts or docs.
