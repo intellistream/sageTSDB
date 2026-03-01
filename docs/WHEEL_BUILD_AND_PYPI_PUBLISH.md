@@ -167,9 +167,8 @@ export TWINE_PASSWORD=pypi-YOUR_TOKEN
 ### 从 TestPyPI 测试
 
 ```bash
-# 创建新虚拟环境
-python3 -m venv test_env
-source test_env/bin/activate
+# 使用现有非-venv Python 环境（建议 conda）
+# conda activate <your-env>
 
 # 从 TestPyPI 安装
 pip install -i https://test.pypi.org/simple/ \

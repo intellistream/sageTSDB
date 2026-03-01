@@ -113,3 +113,4 @@ install/lib/pkgconfig/gmock_main.pc
 install/lib/pkgconfig/gmock.pc
 install/lib/pkgconfig/gtest_main.pc
 install/lib/pkgconfig/gtest.pc
+docs/examples/archived/*.old
