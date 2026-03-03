@@ -306,17 +306,16 @@ table_mgr.printTablesSummary();
 | 3.2 Join 结果表 | `join_result_table.h/cpp` | ✅ 完成 |
 | TableManager | `table_manager.h/cpp` | ✅ 完成 |
 | 数据流架构 | 所有表类 | ✅ 完成 |
-| 资源管理 | `resource_manager.h/cpp` | ⚠️ 已有基础实现 |
-| WindowScheduler | 待实现 | ⏳ 计划中 |
+| 资源管理 | `resource_manager.h/cpp` | ✅ 已实现并有单测 |
+| WindowScheduler | `compute/window_scheduler.*` | ✅ 已实现并有单测 |
 | ComputeStateManager | 待实现 | ⏳ 计划中 |
 
 ## 后续工作
 
-1. **WindowScheduler**: 自动触发窗口计算
-2. **ComputeStateManager**: PECJ 状态持久化
-3. **删除操作**: 支持旧数据清理
-4. **压缩优化**: LSM-Tree 压缩策略调优
-5. **分布式支持**: 表分片和数据分布
+1. **ComputeStateManager**: PECJ 状态持久化
+2. **删除操作**: 支持旧数据清理
+3. **压缩优化**: LSM-Tree 压缩策略调优
+4. **分布式支持**: 表分片和数据分布
 
 ## 相关文档
 

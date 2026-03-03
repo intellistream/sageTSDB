@@ -7,7 +7,8 @@ name = "isage-tsdb"
 dynamic = ["version"]
 description = "High-Performance Time Series Database with C++ Core"
 readme = "README.md"
-authors = [{ name = "SAGE Team", email = "shuhao_zhang@hust.edu.cn" }]
+authors = [{ name = "Debin Chen" }]
+maintainers = [{ name = "Debin Chen" }]
 license = { text = "MIT" }
 classifiers = [
     "Development Status :: 4 - Beta",

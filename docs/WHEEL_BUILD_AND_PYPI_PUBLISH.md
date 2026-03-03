@@ -333,6 +333,6 @@ sageTSDB/
 
 ---
 
-**构建时间**: 2026-01-04  
-**维护者**: SAGE Team  
-**联系方式**: shuhao_zhang@hust.edu.cn
+**构建时间**: 2026-01-04
+**维护者**: Debin Chen (@pluviophile-chen)
+**联系方式**: [pluviophile-chen](https://github.com/pluviophile-chen)

@@ -69,6 +69,7 @@ int main() {
     printSeparator("Test 2: Load PECJ Plugin (Integrated Mode)");
     
     PluginConfig pecj_config;
+    pecj_config["mode"] = "integrated";
     pecj_config["threads"] = "4";           // Request 4 threads
     pecj_config["memory_mb"] = "512";       // Request 512MB
     pecj_config["priority"] = "5";          // High priority
@@ -191,6 +192,7 @@ int main() {
     printSeparator("Test 5: Load Second Plugin (Resource Sharing Test)");
     
     PluginConfig fault_config;
+    fault_config["mode"] = "integrated";
     fault_config["threads"] = "3";
     fault_config["memory_mb"] = "256";
     fault_config["threshold"] = "3.0";

@@ -4,7 +4,13 @@
 
 ## 📖 主文档
 
+**[adr/0001-boundary-and-mode-policy.md](./adr/0001-boundary-and-mode-policy.md)**
+
+- Phase 1 边界职责、模式边界与去兼容化策略
+- in-scope / out-of-scope / forbidden patterns
+
 **[DESIGN_DOC_SAGETSDB_PECJ.md](./DESIGN_DOC_SAGETSDB_PECJ.md)**
+
 - sageTSDB 与 PECJ 集成的详细设计文档
 - 总体架构、双模式设计、运行机制
 - 数据流和计算引擎设计

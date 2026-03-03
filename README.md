@@ -8,6 +8,8 @@
 
 sageTSDB is a high-performance time series database designed for streaming data processing with support for out-of-order data, window-based operations, and pluggable algorithms.
 
+**Repository Owner**: Debin Chen (GitHub: [@pluviophile-chen](https://github.com/pluviophile-chen))
+
 ## 🚀 Quick Install
 
 ```bash
@@ -299,4 +301,5 @@ This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENS
 
 For questions and support:
 - GitHub Issues: https://github.com/intellistream/sageTSDB/issues
-- Email: shuhao_zhang@hust.edu.cn
+- Owner: Debin Chen (@pluviophile-chen)
+- GitHub: [pluviophile-chen](https://github.com/pluviophile-chen)

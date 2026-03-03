@@ -142,6 +142,7 @@ if(TARGET sage_tsdb_compute)
         GTest::gtest_main
         test_utils
     )
+      target_compile_definitions(test_window_scheduler PRIVATE PECJ_MODE_INTEGRATED)
     message(STATUS "Building WindowScheduler tests (simple version)")
 endif()
 

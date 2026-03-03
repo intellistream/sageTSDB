@@ -32,6 +32,12 @@ FaultDetectionAdapter::~FaultDetectionAdapter() {
 }
 
 bool FaultDetectionAdapter::initialize(const PluginConfig& config) {
+    return initialize(config, core::ResourceRequest{}, nullptr);
+}
+
+bool FaultDetectionAdapter::initialize(const PluginConfig& config,
+                                       const core::ResourceRequest& resource_request,
+                                       core::ResourceHandle* resource_handle) {
     std::lock_guard<std::mutex> lock(state_mutex_);
     
     if (initialized_) {
@@ -39,6 +45,9 @@ bool FaultDetectionAdapter::initialize(const PluginConfig& config) {
     }
     
     config_ = config;
+    resource_request_ = resource_request;
+    resource_handle_ = resource_handle;
+    integrated_mode_ = (resource_handle_ != nullptr);
     
     // Parse detection method
     if (config_.find("method") != config_.end()) {
@@ -71,9 +80,15 @@ bool FaultDetectionAdapter::initialize(const PluginConfig& config) {
     if (detection_method_ == DetectionMethod::VAE || 
         detection_method_ == DetectionMethod::HYBRID) {
         if (!initializeModel()) {
-            std::cerr << "Warning: Failed to initialize VAE model, falling back to z-score" << std::endl;
+            std::cerr << "Warning: Failed to initialize VAE model, switching to z-score" << std::endl;
             detection_method_ = DetectionMethod::ZSCORE;
         }
+    }
+
+    if (integrated_mode_) {
+        std::cout << "✓ FaultDetectionAdapter initialized in Integrated mode" << std::endl;
+    } else {
+        std::cout << "✓ FaultDetectionAdapter initialized in Baseline mode" << std::endl;
     }
     
     initialized_ = true;
