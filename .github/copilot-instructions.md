@@ -24,6 +24,10 @@ examples/                  # Demo 程序 (persistence, PECJ 集成等)
 - **PECJ 无状态化**：`PECJComputeEngine` 是纯计算函数，不持有数据缓冲区
 - **资源统一管理**：线程/内存/GPU 由 `ResourceManager` 分配，通过 `ResourceHandle` 使用
 
+## Environment Rule
+
+- Do not create new local virtual environments (`venv`/`.venv`); use the existing configured Python environment.
+
 ## Build Commands
 
 ```bash
@@ -155,3 +159,17 @@ source setup_env.sh  # 配置 LD_LIBRARY_PATH
 - 深度融合总结: `docs/PECJ_DEEP_INTEGRATION_SUMMARY.md`
 - 资源管理: `docs/RESOURCE_MANAGER_GUIDE.md`
 - LSM-Tree 实现: `docs/LSM_TREE_IMPLEMENTATION.md`
+
+## Polyrepo coordination (mandatory)
+
+- This repository is an independent SAGE sub-repository and is developed/released independently.
+- Do not assume sibling source directories exist locally in `intellistream/SAGE`.
+- For cross-repo rollout, publish this repo/package first, then bump the version pin in `SAGE/packages/sage/pyproject.toml` when applicable.
+- Do not add local editable installs of other SAGE sub-packages in setup scripts or docs.
+
+## 🚫 NEVER_CREATE_DOT_VENV_MANDATORY
+
+- 永远不要创建 `.venv` 或 `venv`（无任何例外）。
+- NEVER create `.venv`/`venv` in this repository under any circumstance.
+- 必须复用当前已配置的非-venv Python 环境（如现有 conda 环境）。
+- If any script/task suggests creating a virtualenv, skip that step and continue with the existing environment.

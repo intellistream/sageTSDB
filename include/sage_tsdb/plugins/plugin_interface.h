@@ -55,15 +55,15 @@ public:
      * @param config Configuration parameters
      * @param request Resource requirements
      * @param handle ResourceHandle for submitting tasks
-     * @return true if initialization succeeds, false to fallback to legacy init
-     * 
-     * Default implementation returns false, forcing fallback to initialize(config).
-     * Plugins supporting ResourceManager should override this method.
+     * @return true if initialization succeeds in resource-managed mode
+     *
+     * Default implementation returns false (not supported). Callers must decide
+     * policy explicitly; no implicit fallback should be introduced here.
      */
     virtual bool initialize(const PluginConfig& config, 
                           const core::ResourceRequest& request,
                           core::ResourceHandle* handle) {
-        // Default: not supported, fallback to legacy
+        // Default: resource-managed initialization is not supported
         return false;
     }
     

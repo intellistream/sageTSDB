@@ -1,9 +1,5 @@
 [build-system]
-requires = [
-    "scikit-build-core>=0.5.0",
-    "pybind11>=2.10.0",
-    "cmake>=3.15",
-]
+requires = ["scikit-build-core>=0.5.0", "pybind11>=2.10.0", "cmake>=3.15"]
 build-backend = "scikit_build_core.build"
 
 [project]
@@ -11,9 +7,8 @@ name = "isage-tsdb"
 dynamic = ["version"]
 description = "High-Performance Time Series Database with C++ Core"
 readme = "README.md"
-authors = [
-    { name = "SAGE Team", email = "shuhao_zhang@hust.edu.cn" },
-]
+authors = [{ name = "Debin Chen" }]
+maintainers = [{ name = "Debin Chen" }]
 license = { text = "MIT" }
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -27,16 +22,11 @@ classifiers = [
     "Programming Language :: C++",
 ]
 requires-python = ">=3.10"
-dependencies = [
-    "numpy>=1.26.0,<2.3.0",
-]
+dependencies = ["numpy>=1.26.0,<2.3.0"]
 
 [project.optional-dependencies]
-dev = [
-    "pytest>=7.0.0",
-    "pytest-cov>=4.0.0",
-    "ruff>=0.1.0",
-]
+full = []
+dev = ["isage-tsdb[full]", "pytest>=7.0.0", "pytest-cov>=4.0.0", "ruff>=0.1.0"]
 
 [project.urls]
 Homepage = "https://github.com/intellistream/sageTSDB"
@@ -46,7 +36,7 @@ Repository = "https://github.com/intellistream/sageTSDB.git"
 [tool.scikit-build]
 cmake.build-type = "Release"
 wheel.packages = ["sage_tsdb"]
-wheel.py-api = "py310"
+wheel.py-api = "py311"
 
 # Configure for manylinux compatibility
 [tool.cibuildwheel]
@@ -58,7 +48,7 @@ build-verbosity = 1
 [tool.cibuildwheel.linux]
 before-build = [
     "yum install -y cmake3 gcc-c++ make",
-    "ln -sf /usr/bin/cmake3 /usr/bin/cmake || true"
+    "ln -sf /usr/bin/cmake3 /usr/bin/cmake || true",
 ]
 repair-wheel-command = "auditwheel repair -w {dest_dir} {wheel}"
 
@@ -70,7 +60,7 @@ result = "{0}"
 
 [tool.ruff]
 line-length = 100
-target-version = "py310"
+target-version = "py311"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -78,56 +78,58 @@ bool PluginManager::loadPlugin(const std::string& name, const PluginConfig& conf
         return false;
     }
     
-    // Attempt resource allocation if ResourceManager is available
-    std::shared_ptr<core::ResourceHandle> resource_handle;
-    core::ResourceRequest request;  // Reuse for both allocation and initialization
-    
-    if (resource_manager_) {
-        // Extract resource request from plugin config (with defaults)
+    std::string mode = "baseline";
+    auto mode_it = config.find("mode");
+    if (mode_it != config.end() && !mode_it->second.empty()) {
+        mode = mode_it->second;
+    }
+
+    if (mode == "integrated") {
+        if (!resource_manager_) {
+            std::cerr << "Integrated mode requires ResourceManager for plugin '" << name << "'" << std::endl;
+            return false;
+        }
+
+        core::ResourceRequest request;
         request.requested_threads = getConfigValue<int>(config, "threads", 2);
-        request.max_memory_bytes = getConfigValue<size_t>(config, "memory_mb", 256) * 1024ULL * 1024ULL;
+        request.max_memory_bytes =
+            getConfigValue<size_t>(config, "memory_mb", 256) * 1024ULL * 1024ULL;
         request.priority = getConfigValue<int>(config, "priority", 1);
-        
-        // GPU support (optional)
+
         auto gpu_id = getConfigValue<int>(config, "gpu_id", -1);
         if (gpu_id >= 0) {
             request.gpu_ids.push_back(gpu_id);
         }
-        
-        resource_handle = resource_manager_->allocate(name, request);
+
+        auto resource_handle = resource_manager_->allocate(name, request);
         if (!resource_handle) {
-            std::cerr << "Failed to allocate resources for plugin '" << name << "'" << std::endl;
-            // Continue with legacy initialization
-        } else {
-            std::cout << "✓ Resources allocated for '" << name << "' (threads=" 
-                      << request.requested_threads << ", memory=" 
-                      << (request.max_memory_bytes / 1024 / 1024) << "MB)" << std::endl;
-        }
-    }
-    
-    // Try new initialize method with ResourceManager first
-    bool init_success = false;
-    if (resource_handle) {
-        init_success = plugin->initialize(config, request, resource_handle.get());
-        
-        if (init_success) {
-            std::cout << "✓ Plugin '" << name << "' initialized in Integrated mode" << std::endl;
-            // Store the resource handle for later cleanup
-            plugin_resources_[name] = std::move(resource_handle);
-        } else {
-            std::cerr << "Plugin '" << name << "' rejected ResourceManager initialization" << std::endl;
-            // Release the resource handle and fall back
-            resource_handle.reset();
-        }
-    }
-    
-    // Fallback to legacy initialization
-    if (!init_success) {
-        if (!plugin->initialize(config)) {
-            std::cerr << "Failed to initialize plugin '" << name << "'" << std::endl;
+            std::cerr << "Failed to allocate resources for plugin '" << name
+                      << "' in integrated mode" << std::endl;
             return false;
         }
-        std::cout << "✓ Plugin '" << name << "' initialized in Baseline/Stub mode" << std::endl;
+
+        if (!plugin->initialize(config, request, resource_handle.get())) {
+            std::cerr << "Plugin '" << name
+                      << "' does not support integrated initialization" << std::endl;
+            return false;
+        }
+
+        std::cout << "✓ Plugin '" << name << "' initialized in Integrated mode"
+                  << " (threads=" << request.requested_threads
+                  << ", memory=" << (request.max_memory_bytes / 1024 / 1024) << "MB)"
+                  << std::endl;
+        plugin_resources_[name] = std::move(resource_handle);
+    } else if (mode == "baseline") {
+        if (!plugin->initialize(config)) {
+            std::cerr << "Failed to initialize plugin '" << name
+                      << "' in baseline mode" << std::endl;
+            return false;
+        }
+        std::cout << "✓ Plugin '" << name << "' initialized in Baseline mode" << std::endl;
+    } else {
+        std::cerr << "Invalid mode '" << mode << "' for plugin '" << name
+                  << "' (expected: baseline|integrated)" << std::endl;
+        return false;
     }
     
     // Store plugin

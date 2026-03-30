@@ -167,9 +167,8 @@ export TWINE_PASSWORD=pypi-YOUR_TOKEN
 ### 从 TestPyPI 测试
 
 ```bash
-# 创建新虚拟环境
-python3 -m venv test_env
-source test_env/bin/activate
+# 使用现有非-venv Python 环境（建议 conda）
+# conda activate <your-env>
 
 # 从 TestPyPI 安装
 pip install -i https://test.pypi.org/simple/ \
@@ -334,6 +333,6 @@ sageTSDB/
 
 ---
 
-**构建时间**: 2026-01-04  
-**维护者**: SAGE Team  
-**联系方式**: shuhao_zhang@hust.edu.cn
+**构建时间**: 2026-01-04
+**维护者**: Debin Chen (@pluviophile-chen)
+**联系方式**: [pluviophile-chen](https://github.com/pluviophile-chen)

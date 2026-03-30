@@ -38,6 +38,9 @@ public:
     
     // IAlgorithmPlugin interface
     bool initialize(const PluginConfig& config) override;
+    bool initialize(const PluginConfig& config,
+                    const core::ResourceRequest& resource_request,
+                    core::ResourceHandle* resource_handle) override;
     void feedData(const TimeSeriesData& data) override;
     AlgorithmResult process() override;
     std::map<std::string, int64_t> getStats() const override;
@@ -151,6 +154,9 @@ private:
     int64_t total_detection_time_us_;
     
     // State
+    core::ResourceRequest resource_request_;
+    core::ResourceHandle* resource_handle_ = nullptr;
+    bool integrated_mode_ = false;
     bool initialized_;
     bool running_;
     std::mutex state_mutex_;
