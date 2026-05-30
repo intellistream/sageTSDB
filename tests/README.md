@@ -1,6 +1,6 @@
 # sageTSDB Tests
 
-This directory contains comprehensive unit tests for sageTSDB using Google Test framework.
+This directory contains the active C++ and Python tests for sageTSDB. C++ tests use GoogleTest/CTest; Python tests use pytest.
 
 ## Test Coverage
 
@@ -44,6 +44,33 @@ This directory contains comprehensive unit tests for sageTSDB using Google Test 
   - Empty data handling
   - Multiple batch processing
 
+### Storage and Table Tests
+- **test_storage_engine.cpp**: Persistence, checkpoint, vector value, and large dataset tests.
+- **test_table_design.cpp**: StreamTable, JoinResultTable, TableManager, and end-to-end table workflow tests.
+
+### Compute Tests
+- **test_srtfd_compute_engine.cpp**: SRTFD stateless diagnosis engine tests.
+  - Initialization and result table creation
+  - Fail-fast unsupported backend handling
+  - Empty windows
+  - Feature dimension validation
+  - Diagnosis result writeback and metrics
+
+- **test_pecj_compute_engine.cpp**: PECJ compute engine tests, built only when `SAGE_TSDB_ENABLE_PECJ=ON` and `PECJ_MODE=INTEGRATED`.
+- **test_window_scheduler_simple.cpp**: Runtime-safe WindowScheduler tests for the integrated PECJ build.
+
+### Plugin Tests
+- **test_pecj_plugin.cpp**: PECJ plugin adapter lifecycle and feed/process behavior.
+- **test_fault_detection_plugin.cpp**: Fault detection plugin adapter behavior.
+- **test_resource_manager.cpp**: ResourceManager allocation, task, usage, limits, and release behavior.
+- **test_integrated_mode.cpp**: Manual integrated-mode verification tool; it is built but intentionally not registered in CTest.
+
+### Python Tests
+- **test_smoke.py**: package import and top-level symbol smoke tests.
+- **test_python_layer.py**: Python fallback core API tests.
+- **test_algorithms.py**: Python out-of-order join and window aggregation tests.
+- **test_service.py**: Python service wrapper tests.
+
 ## Building and Running Tests
 
 ### Prerequisites
@@ -58,39 +85,59 @@ brew install cmake ninja fmt spdlog
 ### Build Tests
 ```bash
 # From sageTSDB root directory
-mkdir -p build
-cd build
+cmake -B build_test_default -S . \
+  -DBUILD_TESTS=ON \
+  -DSAGE_TSDB_ENABLE_SRTFD=ON \
+  -DSAGE_TSDB_ENABLE_PECJ=OFF \
+  -DCMAKE_BUILD_TYPE=Debug
 
-# Configure with tests enabled
-cmake .. -G Ninja -DBUILD_TESTS=ON -DCMAKE_BUILD_TYPE=Debug
-
-# Build
-cmake --build .
+cmake --build build_test_default -j$(nproc)
 ```
 
 ### Run All Tests
 ```bash
-# From build directory
-ctest --output-on-failure --verbose
+# From sageTSDB root directory
+ctest --test-dir build_test_default --output-on-failure
 ```
 
 ### Run Specific Test
 ```bash
-# From build directory
-./test_time_series_data
-./test_time_series_index
-./test_time_series_db
-./test_stream_join
-./test_window_aggregator
+./build_test_default/tests/test_time_series_data
+./build_test_default/tests/test_time_series_index
+./build_test_default/tests/test_time_series_db
+./build_test_default/tests/test_stream_join
+./build_test_default/tests/test_window_aggregator
+./build_test_default/tests/test_srtfd_compute_engine
 ```
 
 ### Run Tests with Filtering
 ```bash
 # Run only tests matching pattern
-./test_time_series_index --gtest_filter="*Query*"
+./build_test_default/tests/test_time_series_index --gtest_filter="*Query*"
 
 # List all tests
-./test_time_series_index --gtest_list_tests
+./build_test_default/tests/test_srtfd_compute_engine --gtest_list_tests
+```
+
+### Python Tests
+```bash
+python3 -m pip install 'pytest>=7.0.0' 'pytest-cov>=4.0.0'
+python3 -m pytest tests -q
+```
+
+### PECJ Integrated Tests
+PECJ integrated tests require a local PECJ checkout and its dependencies:
+
+```bash
+cmake -B build_test_pecj -S . \
+  -DBUILD_TESTS=ON \
+  -DSAGE_TSDB_ENABLE_PECJ=ON \
+  -DPECJ_MODE=INTEGRATED \
+  -DPECJ_DIR=/path/to/PECJ \
+  -DCMAKE_BUILD_TYPE=Debug
+
+cmake --build build_test_pecj -j$(nproc)
+ctest --test-dir build_test_pecj --output-on-failure
 ```
 
 ## Test Configuration
@@ -197,29 +244,16 @@ Some tests may behave differently on macOS due to different standard library imp
 ### Issue: Compilation errors
 ```bash
 # Clean and rebuild
-cd build
-rm -rf *
-cmake .. -DBUILD_TESTS=ON
-cmake --build .
+rm -rf build_test_default
+cmake -B build_test_default -S . -DBUILD_TESTS=ON
+cmake --build build_test_default
 ```
 
 ## Test Statistics
 
 Run `ctest` to see summary:
 ```
-Test project /path/to/build
-    Start 1: test_time_series_data
-1/5 Test #1: test_time_series_data ............   Passed    0.01 sec
-    Start 2: test_time_series_index
-2/5 Test #2: test_time_series_index ...........   Passed    0.02 sec
-    Start 3: test_time_series_db
-3/5 Test #3: test_time_series_db ..............   Passed    0.01 sec
-    Start 4: test_stream_join
-4/5 Test #4: test_stream_join .................   Passed    0.01 sec
-    Start 5: test_window_aggregator
-5/5 Test #5: test_window_aggregator ...........   Passed    0.02 sec
-
-100% tests passed, 0 tests failed out of 5
+100% tests passed, 0 tests failed
 ```
 
 ## Contributing
