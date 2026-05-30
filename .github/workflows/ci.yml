@@ -11,26 +11,28 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
+env:
+  CMAKE_GENERATOR: Ninja
+  CTEST_OUTPUT_ON_FAILURE: 1
+
 jobs:
-  build-and-test:
-    name: Build and Test
+  cpp-default:
+    name: C++ Default (${{ matrix.os }}, ${{ matrix.build_type }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
         build_type: [Debug, Release]
-        include:
-          - os: ubuntu-latest
-            compiler: gcc
-          - os: macos-latest
-            compiler: clang
 
     steps:
-      - name: Checkout Repository
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install Dependencies (Ubuntu)
+      - name: Install system dependencies (Ubuntu)
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update -qq
@@ -41,42 +43,138 @@ jobs:
             libfmt-dev \
             libspdlog-dev
 
-      - name: Install Dependencies (macOS)
+      - name: Install system dependencies (macOS)
         if: runner.os == 'macOS'
         run: |
+          brew update
           brew install cmake ninja fmt spdlog
 
-      - name: Configure CMake
+      - name: Configure
         run: |
-          cmake -B build -G Ninja \
+          cmake -B build -S . -G "${CMAKE_GENERATOR}" \
             -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} \
             -DBUILD_TESTS=ON \
-            -DCMAKE_CXX_STANDARD=17
+            -DBUILD_PLUGINS=ON \
+            -DSAGE_TSDB_ENABLE_SRTFD=ON \
+            -DSAGE_TSDB_ENABLE_PECJ=OFF
 
       - name: Build
         run: |
-          NPROC=$(nproc 2>/dev/null || sysctl -n hw.ncpu)
-          cmake --build build --config ${{ matrix.build_type }} -j $NPROC
+          if command -v nproc >/dev/null 2>&1; then
+            jobs=$(nproc)
+          else
+            jobs=$(sysctl -n hw.ncpu)
+          fi
+          cmake --build build --config ${{ matrix.build_type }} -j "${jobs}"
 
-      - name: Run Tests
-        working-directory: build
-        run: ctest --output-on-failure --verbose
+      - name: Run CTest
+        run: ctest --test-dir build --output-on-failure
 
-      - name: Upload Test Results
+      - name: Upload CTest logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: test-results-${{ matrix.os }}-${{ matrix.build_type }}
+          name: ctest-default-${{ matrix.os }}-${{ matrix.build_type }}
           path: build/Testing/
+          if-no-files-found: ignore
 
-  coverage:
-    name: Code Coverage
+  cpp-pecj-integrated:
+    name: C++ PECJ Integrated API
     runs-on: ubuntu-latest
+
     steps:
-      - name: Checkout Repository
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install Dependencies
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            cmake \
+            ninja-build \
+            libfmt-dev \
+            libspdlog-dev
+
+      - name: Configure PECJ integrated stub build
+        run: |
+          cmake -B build -S . -G "${CMAKE_GENERATOR}" \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DBUILD_TESTS=ON \
+            -DBUILD_PLUGINS=ON \
+            -DSAGE_TSDB_ENABLE_SRTFD=ON \
+            -DSAGE_TSDB_ENABLE_PECJ=ON \
+            -DPECJ_MODE=INTEGRATED \
+            -DPECJ_FULL_INTEGRATION=OFF
+
+      - name: Build
+        run: cmake --build build -j "$(nproc)"
+
+      - name: Run CTest
+        run: ctest --test-dir build --output-on-failure
+
+      - name: Verify compute test registration
+        run: |
+          ctest --test-dir build -N | grep "SRTFDComputeEngineTest"
+          ctest --test-dir build -N | grep "PECJComputeEngineTest"
+
+      - name: Upload CTest logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ctest-pecj-integrated
+          path: build/Testing/
+          if-no-files-found: ignore
+
+  python-tests:
+    name: Python (${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.10', '3.11', '3.12']
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install Python test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install \
+            'numpy>=1.26.0,<2.3.0' \
+            'pytest>=7.0.0' \
+            'pytest-cov>=4.0.0' \
+            coverage
+
+      - name: Run pytest
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+        run: python -m pytest tests -q
+
+      - name: Upload pytest coverage HTML
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pytest-htmlcov-${{ matrix.python-version }}
+          path: htmlcov/
+          if-no-files-found: ignore
+
+  cpp-coverage:
+    name: C++ Coverage
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install system dependencies
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends \
@@ -87,147 +185,49 @@ jobs:
             libfmt-dev \
             libspdlog-dev
 
-      - name: Configure CMake with Coverage
+      - name: Configure coverage build
         run: |
-          cmake -B build -G Ninja \
+          cmake -B build-coverage -S . -G "${CMAKE_GENERATOR}" \
             -DCMAKE_BUILD_TYPE=Debug \
             -DBUILD_TESTS=ON \
+            -DBUILD_PLUGINS=ON \
+            -DSAGE_TSDB_ENABLE_SRTFD=ON \
+            -DSAGE_TSDB_ENABLE_PECJ=OFF \
             -DENABLE_COVERAGE=ON \
             -DCMAKE_CXX_FLAGS="-O0 --coverage -fprofile-arcs -ftest-coverage -g"
 
       - name: Build
-        run: cmake --build build -j $(nproc)
+        run: cmake --build build-coverage -j "$(nproc)"
 
-      - name: Run Tests
-        working-directory: build
-        run: ctest --output-on-failure
+      - name: Run CTest
+        run: ctest --test-dir build-coverage --output-on-failure
 
-      - name: Generate Coverage Report
+      - name: Generate lcov report
         run: |
-          lcov --capture --directory build --output-file coverage.info \
+          lcov --capture --directory build-coverage --output-file coverage.info \
             --ignore-errors mismatch,empty \
-            --rc geninfo_unexecuted_blocks=1 || true
-          lcov --remove coverage.info '/usr/*' '*/tests/*' '*/build/_deps/*' '*/.cache/*' \
+            --rc geninfo_unexecuted_blocks=1
+          lcov --remove coverage.info \
+            '/usr/*' \
+            '*/tests/*' \
+            '*/build-coverage/_deps/*' \
+            '*/_deps/*' \
             --output-file coverage.info.filtered \
-            --ignore-errors mismatch,empty || true
-          lcov --list coverage.info.filtered || true
-          # Ensure file exists for upload
-          touch coverage.info.filtered
+            --ignore-errors mismatch,empty
+          lcov --list coverage.info.filtered
 
-      - name: Upload Coverage to Codecov
+      - name: Upload coverage artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cpp-coverage-lcov
+          path: coverage.info.filtered
+          if-no-files-found: ignore
+
+      - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4
         with:
-          files: ./coverage.info.filtered
+          files: coverage.info.filtered
           fail_ci_if_error: false
           verbose: true
-
-  static-analysis:
-    name: Static Analysis
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
-
-      - name: Install Dependencies
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends \
-            clang-tidy \
-            cppcheck \
-            cmake \
-            ninja-build \
-            libfmt-dev \
-            libspdlog-dev
-
-      - name: Run cppcheck
-        run: |
-          cppcheck --enable=all --suppress=missingIncludeSystem \
-            --error-exitcode=1 \
-            -I include \
-            src/ 2>&1 | tee cppcheck-report.txt || true
-
-      - name: Configure for clang-tidy
-        run: |
-          cmake -B build -G Ninja \
-            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
-            -DBUILD_TESTS=ON
-
-      - name: Run clang-tidy
-        run: |
-          find src -name "*.cpp" | xargs clang-tidy -p build || true
-
-      - name: Upload Analysis Results
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: static-analysis-results
-          path: |
-            cppcheck-report.txt
-            build/compile_commands.json
-
-  stub-mode-test:
-    name: Stub Mode (No PECJ) Build Test
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
-
-      - name: Install Dependencies
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends \
-            build-essential \
-            cmake \
-            ninja-build \
-            libfmt-dev \
-            libspdlog-dev
-
-      - name: Configure CMake (Stub Mode - Default)
-        run: |
-          cmake -B build -G Ninja \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DBUILD_TESTS=ON \
-            -DCMAKE_CXX_STANDARD=20
-          echo "=== CMake Configuration ==="
-          cat build/CMakeCache.txt | grep -E "PECJ|PLUGIN" || echo "No PECJ configuration (expected in Stub mode)"
-
-      - name: Build (Stub Mode)
-        run: |
-          NPROC=$(nproc)
-          cmake --build build --config Release -j $NPROC
-          echo "=== Build completed successfully in Stub mode ==="
-
-      - name: Verify Stub Mode Plugins
-        run: |
-          echo "=== Checking for plugin libraries ==="
-          ls -lh build/*.so 2>/dev/null || echo "No shared libraries in build/"
-          ls -lh build/src/plugins/*.so 2>/dev/null || echo "No shared libraries in build/src/plugins/"
-          # Check in both possible locations
-          if [ -f "build/libsage_tsdb_plugins.so" ] || [ -f "build/src/plugins/libsage_tsdb_plugins.so" ]; then
-            echo "✓ Plugin library built successfully"
-          else
-            echo "⚠ Plugin library not found (may be expected if BUILD_PLUGINS=OFF)"
-            exit 0
-          fi
-
-      - name: Run Plugin Tests (Stub Mode)
-        working-directory: build
-        run: |
-          echo "=== Running plugin tests in Stub mode ==="
-          ctest --output-on-failure --verbose -R "test_.*_plugin" || echo "Some plugin tests may be skipped in Stub mode"
-
-      - name: Run ResourceManager Tests
-        working-directory: build
-        run: |
-          echo "=== Running ResourceManager tests ==="
-          ./test/plugins/test_resource_manager --gtest_output=xml:test_results.xml || true
-
-      - name: Upload Stub Mode Results
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: stub-mode-test-results
-          path: |
-            build/Testing/
-            build/test_results.xml
 
