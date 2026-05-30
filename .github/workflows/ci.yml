@@ -204,8 +204,9 @@ jobs:
 
       - name: Generate lcov report
         run: |
+          LCOV_IGNORE_ERRORS="mismatch,empty,unused"
           lcov --capture --directory build-coverage --output-file coverage.info \
-            --ignore-errors mismatch,empty \
+            --ignore-errors "${LCOV_IGNORE_ERRORS}" \
             --rc geninfo_unexecuted_blocks=1
           lcov --remove coverage.info \
             '/usr/*' \
@@ -213,8 +214,8 @@ jobs:
             '*/build-coverage/_deps/*' \
             '*/_deps/*' \
             --output-file coverage.info.filtered \
-            --ignore-errors mismatch,empty
-          lcov --list coverage.info.filtered
+            --ignore-errors "${LCOV_IGNORE_ERRORS}"
+          lcov --list coverage.info.filtered --ignore-errors empty,unused
 
       - name: Upload coverage artifact
         if: always()
