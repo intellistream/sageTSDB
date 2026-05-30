@@ -60,18 +60,31 @@ add_library(sage_tsdb_core
 
 # PECJ Integration Mode selection
 option(SAGE_TSDB_ENABLE_PECJ "Enable PECJ integration" OFF)
+option(SAGE_TSDB_ENABLE_SRTFD "Enable SRTFD stateless compute engine" ON)
+option(PECJ_FULL_INTEGRATION "Enable full PECJ integration (requires PECJ library)" OFF)
 set(PECJ_MODE "INTEGRATED" CACHE STRING "PECJ integration mode: PLUGIN or INTEGRATED")
 
-# Compute library (PECJ Deep Integration)
+# Compute library (stateless compute engines)
+set(SAGE_TSDB_COMPUTE_SOURCES)
+
+if(SAGE_TSDB_ENABLE_SRTFD)
+    list(APPEND SAGE_TSDB_COMPUTE_SOURCES
+        src/compute/srtfd_compute_engine.cpp
+    )
+endif()
+
 if(SAGE_TSDB_ENABLE_PECJ AND PECJ_MODE STREQUAL "INTEGRATED")
-    message(STATUS "Building PECJ Compute Engine (Deep Integration Mode)")
-    add_definitions(-DPECJ_MODE_INTEGRATED)
-    
-    add_library(sage_tsdb_compute
+    list(APPEND SAGE_TSDB_COMPUTE_SOURCES
         src/compute/pecj_compute_engine.cpp
         src/compute/window_scheduler.cpp
     )
-    
+endif()
+
+if(SAGE_TSDB_COMPUTE_SOURCES)
+    add_library(sage_tsdb_compute
+        ${SAGE_TSDB_COMPUTE_SOURCES}
+    )
+
     target_include_directories(sage_tsdb_compute
         PUBLIC
             $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
@@ -85,6 +98,17 @@ if(SAGE_TSDB_ENABLE_PECJ AND PECJ_MODE STREQUAL "INTEGRATED")
         PUBLIC
             sage_tsdb_core
     )
+
+    if(SAGE_TSDB_ENABLE_SRTFD)
+        target_compile_definitions(sage_tsdb_compute PUBLIC SAGE_TSDB_ENABLE_SRTFD=1)
+        message(STATUS "Building SRTFD Compute Engine (Stateless Mode)")
+    endif()
+endif()
+
+# PECJ Compute Engine (Deep Integration)
+if(SAGE_TSDB_ENABLE_PECJ AND PECJ_MODE STREQUAL "INTEGRATED" AND TARGET sage_tsdb_compute)
+    message(STATUS "Building PECJ Compute Engine (Deep Integration Mode)")
+    target_compile_definitions(sage_tsdb_compute PUBLIC PECJ_MODE_INTEGRATED=1)
     
     # If PECJ directory is specified, add PECJ support
     if(DEFINED PECJ_DIR)
@@ -168,7 +192,6 @@ target_link_libraries(sage_tsdb_algorithms
 
 # Plugins library (optional, if PECJ is available)
 option(BUILD_PLUGINS "Build plugin system" ON)
-option(PECJ_FULL_INTEGRATION "Enable full PECJ integration (requires PECJ library)" OFF)
 
 # Set CMAKE_PREFIX_PATH for finding Torch (from PyTorch installation)
 if(NOT DEFINED CMAKE_PREFIX_PATH)
@@ -411,6 +434,7 @@ message(STATUS "  Build tests: ${BUILD_TESTS}")
 message(STATUS "  Build Python bindings: ${BUILD_PYTHON_BINDINGS}")
 message(STATUS "  Build shared libs: ${BUILD_SHARED_LIBS}")
 message(STATUS "  Build plugins: ${BUILD_PLUGINS}")
+message(STATUS "  SRTFD compute support: ${SAGE_TSDB_ENABLE_SRTFD}")
 if(DEFINED PECJ_DIR AND EXISTS "${PECJ_DIR}/include")
     message(STATUS "  PECJ support: YES (${PECJ_DIR})")
 elseif(TARGET sage_tsdb_plugins)

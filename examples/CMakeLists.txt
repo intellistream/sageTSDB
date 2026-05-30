@@ -31,8 +31,8 @@ target_link_libraries(table_design_demo
         sage_tsdb_core
 )
 
-# WindowScheduler demo (only if compute library is built)
-if(TARGET sage_tsdb_compute)
+# WindowScheduler demo (only if PECJ integrated compute is built)
+if(TARGET sage_tsdb_compute AND SAGE_TSDB_ENABLE_PECJ AND PECJ_MODE STREQUAL "INTEGRATED")
     add_executable(window_scheduler_demo
         basic/window_scheduler_demo.cpp
     )
@@ -104,8 +104,8 @@ if(TARGET sage_tsdb_plugins)
             ${CMAKE_SOURCE_DIR}/include
     )
 
-    # 3. Deep Integration Demo (only if compute library is built in INTEGRATED mode)
-    if(TARGET sage_tsdb_compute AND PECJ_MODE STREQUAL "INTEGRATED")
+    # 3. Deep Integration Demo (only if PECJ compute library is built in INTEGRATED mode)
+    if(TARGET sage_tsdb_compute AND SAGE_TSDB_ENABLE_PECJ AND PECJ_MODE STREQUAL "INTEGRATED")
         add_executable(deep_integration_demo
             integration/deep_integration_demo.cpp
         )
@@ -124,8 +124,8 @@ if(TARGET sage_tsdb_plugins)
         message(STATUS "Building deep_integration_demo (PECJ Integrated Mode)")
     endif()
 
-    # 4. PECJ vs SHJ Comparison Demo (only in INTEGRATED mode with compute library)
-    if(PECJ_MODE STREQUAL "INTEGRATED" AND TARGET sage_tsdb_compute)
+    # 4. PECJ vs SHJ Comparison Demo (only in INTEGRATED mode with PECJ compute library)
+    if(SAGE_TSDB_ENABLE_PECJ AND PECJ_MODE STREQUAL "INTEGRATED" AND TARGET sage_tsdb_compute)
         add_executable(pecj_shj_comparison_demo
             integration/pecj_shj_comparison_demo.cpp
         )
@@ -203,7 +203,7 @@ if(TARGET sage_tsdb_plugins)
     )
     
     # If INTEGRATED mode is enabled and compute library exists, link compute library and add definition
-    if(PECJ_MODE STREQUAL "INTEGRATED" AND TARGET sage_tsdb_compute)
+    if(SAGE_TSDB_ENABLE_PECJ AND PECJ_MODE STREQUAL "INTEGRATED" AND TARGET sage_tsdb_compute)
         target_link_libraries(pecj_integrated_vs_plugin_benchmark
             PRIVATE
                 sage_tsdb_compute

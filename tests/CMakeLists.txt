@@ -109,13 +109,13 @@ target_link_libraries(test_pecj_operators
     test_utils
 )
 # Add compute library if available (for full integration tests)
-if(TARGET sage_tsdb_compute)
+if(TARGET sage_tsdb_compute AND SAGE_TSDB_ENABLE_PECJ AND PECJ_MODE STREQUAL "INTEGRATED")
     target_link_libraries(test_pecj_operators PRIVATE sage_tsdb_compute)
     target_compile_definitions(test_pecj_operators PRIVATE PECJ_MODE_INTEGRATED)
 endif()
 
 # PECJ Compute Engine integration tests (requires compute library)
-if(TARGET sage_tsdb_compute)
+if(TARGET sage_tsdb_compute AND SAGE_TSDB_ENABLE_PECJ AND PECJ_MODE STREQUAL "INTEGRATED")
     add_executable(test_pecj_compute_engine
       test_pecj_compute_engine.cpp
     )
@@ -131,7 +131,7 @@ if(TARGET sage_tsdb_compute)
 endif()
 
 # WindowScheduler tests (only if compute library is built)
-if(TARGET sage_tsdb_compute)
+if(TARGET sage_tsdb_compute AND SAGE_TSDB_ENABLE_PECJ AND PECJ_MODE STREQUAL "INTEGRATED")
     add_executable(test_window_scheduler
       test_window_scheduler_simple.cpp
     )
@@ -144,6 +144,21 @@ if(TARGET sage_tsdb_compute)
     )
       target_compile_definitions(test_window_scheduler PRIVATE PECJ_MODE_INTEGRATED)
     message(STATUS "Building WindowScheduler tests (simple version)")
+endif()
+
+# SRTFD stateless compute engine tests
+if(TARGET sage_tsdb_compute AND SAGE_TSDB_ENABLE_SRTFD)
+    add_executable(test_srtfd_compute_engine
+      test_srtfd_compute_engine.cpp
+    )
+    target_link_libraries(test_srtfd_compute_engine
+      PRIVATE
+        sage_tsdb_compute
+        sage_tsdb_core
+        GTest::gtest_main
+        test_utils
+    )
+    message(STATUS "Building SRTFD Compute Engine tests")
 endif()
 
 # Plugin tests (only if plugins are built)
@@ -211,6 +226,10 @@ endif()
 
 if(TARGET test_pecj_compute_engine)
     gtest_discover_tests(test_pecj_compute_engine)
+endif()
+
+if(TARGET test_srtfd_compute_engine)
+  gtest_discover_tests(test_srtfd_compute_engine)
 endif()
 
 if(TARGET test_pecj_plugin)
