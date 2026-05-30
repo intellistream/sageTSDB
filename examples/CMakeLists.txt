@@ -151,6 +151,32 @@ if(TARGET sage_tsdb_plugins)
         list(APPEND EXAMPLE_TARGETS pecj_shj_comparison_demo)
         message(STATUS "  - pecj_shj_comparison_demo")
     endif()
+
+    # 5. PECJ + SRTFD Showcase Demo (requires both stateless compute engines)
+    if(SAGE_TSDB_ENABLE_SRTFD AND SAGE_TSDB_ENABLE_PECJ AND PECJ_MODE STREQUAL "INTEGRATED" AND TARGET sage_tsdb_compute)
+        add_executable(pecj_srtfd_showcase_demo
+            integration/pecj_srtfd_showcase_demo.cpp
+        )
+
+        target_link_libraries(pecj_srtfd_showcase_demo
+            PRIVATE
+                sage_tsdb_core
+                sage_tsdb_compute
+        )
+
+        target_include_directories(pecj_srtfd_showcase_demo
+            PRIVATE
+                ${CMAKE_SOURCE_DIR}/include
+        )
+
+        target_compile_definitions(pecj_srtfd_showcase_demo
+            PRIVATE
+                PECJ_MODE_INTEGRATED
+        )
+
+        list(APPEND EXAMPLE_TARGETS pecj_srtfd_showcase_demo)
+        message(STATUS "  - pecj_srtfd_showcase_demo")
+    endif()
     
     # Add PECJ integration demos to install targets
     list(APPEND EXAMPLE_TARGETS 
@@ -245,6 +271,9 @@ if(TARGET plugin_usage_example)
 endif()
 if(TARGET window_scheduler_demo)
     list(APPEND EXAMPLE_TARGETS window_scheduler_demo)
+endif()
+if(TARGET pecj_srtfd_showcase_demo)
+    list(APPEND EXAMPLE_TARGETS pecj_srtfd_showcase_demo)
 endif()
 
 install(TARGETS ${EXAMPLE_TARGETS}

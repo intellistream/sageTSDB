@@ -20,6 +20,7 @@ examples/
 │
 ├── integration/                   # PECJ 集成示例
 │   ├── README.md                  # 集成示例说明
+│   ├── pecj_srtfd_showcase_demo.cpp
 │   ├── pecj_replay_demo.cpp
 │   ├── pecj_shj_comparison_demo.cpp
 │   ├── integrated_demo.cpp
@@ -83,10 +84,10 @@ ls build/examples/
 cd build/examples
 
 # 基础功能演示
-./basic/persistence_example
+./persistence_example
 
 # PECJ 流式 Join 演示
-./integration/pecj_replay_demo \
+./pecj_replay_demo \
     --s-file ../../examples/datasets/sTuple.csv \
     --r-file ../../examples/datasets/rTuple.csv \
     --max-tuples 5000
@@ -114,6 +115,7 @@ cd build/examples
 
 | 示例程序 | 功能说明 | 运行时间 |
 |---------|---------|---------|
+| **pecj_srtfd_showcase_demo** | PECJ 乱序流式聚合 + SRTFD 持续诊断 | <1 分钟 |
 | **pecj_replay_demo** | 基础流式 Join，数据重放 | ~5 分钟 |
 | **pecj_shj_comparison_demo** | PECJ vs SHJ 算法对比 | ~8 分钟 |
 | **integrated_demo** | PECJ + 故障检测端到端演示 | ~10 分钟 |
@@ -180,13 +182,13 @@ cd build/examples
 cd build/examples
 
 # 1. 数据持久化
-./basic/persistence_example
+./persistence_example
 
 # 2. 表操作
-./basic/table_design_demo
+./table_design_demo
 
 # 3. 窗口调度
-./basic/window_scheduler_demo
+./window_scheduler_demo
 ```
 
 👉 更多信息: [基础示例](./basic/README.md)
@@ -198,7 +200,21 @@ cd build/examples
 
 ```bash
 cd build/examples
-./integration/pecj_replay_demo \
+./pecj_srtfd_showcase_demo \
+    --events 48 \
+    --windows 6
+```
+
+👉 更多信息: [集成示例](./integration/README.md)
+
+---
+
+### 场景 3: PECJ 数据重放（5 分钟）
+**适合**: 快速验证流式 Join 数据路径
+
+```bash
+cd build/examples
+./pecj_replay_demo \
     --s-file ../../examples/datasets/sTuple.csv \
     --r-file ../../examples/datasets/rTuple.csv \
     --max-tuples 5000 \
@@ -209,12 +225,12 @@ cd build/examples
 
 ---
 
-### 场景 3: 完整功能演示（10 分钟）
+### 场景 4: 完整功能演示（10 分钟）
 **适合**: 展示端到端数据处理管道
 
 ```bash
 cd build/examples
-./integration/integrated_demo \
+./integrated_demo \
     --s-file ../../examples/datasets/sTuple.csv \
     --r-file ../../examples/datasets/rTuple.csv \
     --max-tuples 10000
@@ -222,14 +238,14 @@ cd build/examples
 
 ---
 
-### 场景 4: 性能评估（15-30 分钟）
+### 场景 5: 性能评估（15-30 分钟）
 **适合**: 技术评估、性能对比
 
 ```bash
 cd build/examples
 
 # 运行性能测试
-./benchmarks/performance_benchmark \
+./performance_benchmark \
     --s-file ../../examples/datasets/sTuple.csv \
     --r-file ../../examples/datasets/rTuple.csv \
     --output-json ../../examples/outputs/results/benchmark.json
@@ -274,7 +290,7 @@ cmake .. -DSAGE_TSDB_ENABLE_PECJ=ON -DPECJ_DIR=/path/to/PECJ
 **A**: 使用相对于 build/examples 的路径:
 ```bash
 cd build/examples
-./integration/pecj_replay_demo \
+./pecj_replay_demo \
     --s-file ../../examples/datasets/sTuple.csv \
     --r-file ../../examples/datasets/rTuple.csv
 ```

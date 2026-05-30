@@ -4,7 +4,25 @@
 
 ## 📚 示例列表
 
-### 1. pecj_replay_demo.cpp
+### 1. pecj_srtfd_showcase_demo.cpp
+**功能**: PECJ 乱序流式窗口聚合 + SRTFD 持续诊断联合演示
+
+**演示内容**:
+- 生成乱序到达的 S/R 双流并写入 sageTSDB stream table
+- 使用 PECJ stateless compute engine 执行窗口 Join/聚合
+- 使用 SRTFD stateless compute engine 对冷却辊传感器向量连续诊断
+- 将诊断结果写回 `srtfd_results` 表并输出异常行
+
+**运行时间**: <1 分钟
+
+**运行方式**:
+```bash
+./scripts/demo/run_pecj_srtfd_showcase.sh
+```
+
+---
+
+### 2. pecj_replay_demo.cpp
 **功能**: 基础流式 Join 数据重放演示
 
 **演示内容**:
@@ -33,7 +51,7 @@ cd build/examples
 
 ---
 
-### 2. pecj_shj_comparison_demo.cpp
+### 3. pecj_shj_comparison_demo.cpp
 **功能**: PECJ vs SHJ 算法对比
 
 **演示内容**:
@@ -54,7 +72,7 @@ cd build/examples
 
 ---
 
-### 3. integrated_demo.cpp
+### 4. integrated_demo.cpp
 **功能**: PECJ + 故障检测端到端演示
 
 **演示内容**:
@@ -75,7 +93,7 @@ cd build/examples
 
 ---
 
-### 4. deep_integration_demo.cpp
+### 5. deep_integration_demo.cpp
 **功能**: 深度集成架构和乱序处理
 
 **演示内容**:
@@ -102,11 +120,11 @@ cd build/examples
 
 ## 🎯 学习路径建议
 
-**入门**: `pecj_replay_demo` → 理解基本流式 Join
+**入门**: `pecj_srtfd_showcase_demo` → 同时理解 PECJ 与 SRTFD stateless compute engine
 
-**进阶**: `pecj_shj_comparison_demo` → 了解算法对比
+**进阶**: `pecj_replay_demo` → 理解基本流式 Join
 
-**实战**: `integrated_demo` → 完整数据处理管道
+**实战**: `pecj_shj_comparison_demo` → 了解算法对比
 
 **深入**: `deep_integration_demo` → 高级特性和优化
 

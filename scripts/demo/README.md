@@ -4,7 +4,28 @@
 
 ## 📚 脚本列表
 
-### 1. run_demo.sh
+### 1. run_pecj_srtfd_showcase.sh
+**功能**: 推荐的一键联合演示，展示 PECJ 乱序流式窗口聚合和 SRTFD 持续故障诊断
+
+**对应示例**:
+- `examples/integration/pecj_srtfd_showcase_demo.cpp`
+
+**用法**:
+```bash
+./scripts/demo/run_pecj_srtfd_showcase.sh
+```
+
+默认启用 `PECJ_FULL_INTEGRATION=ON` 构建真实 PECJ 后端；如果只想验证 sageTSDB 集成 API，可以加 `--stub-pecj`。
+
+**演示内容**:
+- 构造按到达时间插入、按事件时间开窗的乱序双流数据
+- 通过 PECJ stateless compute engine 执行窗口 Join/聚合
+- 将冷却辊传感器向量写入 sageTSDB 并通过 SRTFD stateless compute engine 持续诊断
+- 输出窗口输入量、匹配对数、诊断异常数和写回结果
+
+---
+
+### 2. run_demo.sh
 **功能**: 交互式演示启动器，提供多种预配置演示场景
 
 **对应示例**:
@@ -27,7 +48,7 @@
 
 ---
 
-### 2. run_disorder_demo.sh
+### 3. run_disorder_demo.sh
 **功能**: 乱序处理能力演示和性能测试
 
 **对应示例**:
@@ -54,7 +75,7 @@
 
 ---
 
-### 3. run_pecj_shj_comparison.sh
+### 4. run_pecj_shj_comparison.sh
 **功能**: PECJ (IMA) 与 SHJ (Symmetric Hash Join) 算法对比
 
 **对应示例**:
@@ -76,8 +97,7 @@
 
 ### 场景 1: 快速展示系统能力（推荐）
 ```bash
-./run_demo.sh
-# 选择 "1) Basic Replay Demo"
+./run_pecj_srtfd_showcase.sh
 ```
 
 ### 场景 2: 演示乱序处理能力
