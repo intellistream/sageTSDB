@@ -1,1777 +1,548 @@
-# sageTSDB 深度融合 PECJ 集成设计文档
+# sageTSDB 系统设计文档
 
-版本: v3.0 (Deep Integration Architecture)
-更新日期: 2024-12-09
-分支: `pecj_resource_integration`
+版本: v2026.05
+更新日期: 2026-05-30
+适用范围: `sageTSDB` 当前代码库
 
-## 实现状态概览
-
-| 模块 | 设计状态 | 实现状态 | 说明 |
-|------|---------|---------|------|
-| 双模式架构 | ✅ 已设计 | ✅ 已实现 | 支持 PLUGIN/INTEGRATED 模式切换 |
-| PECJComputeEngine | ✅ 已设计 | ✅ 已实现 | 无状态计算引擎 (v3.0) |
-| WindowScheduler | ✅ 已设计 | ✅ 已实现 | 自动触发窗口计算 |
-| ComputeStateManager | ✅ 已设计 | ✅ 已实现 | 计算状态持久化 |
-| StreamTable | ✅ 已设计 | ✅ 已实现 | 输入流表 (MemTable + LSM-Tree) |
-| JoinResultTable | ✅ 已设计 | ✅ 已实现 | Join 结果表 |
-| ResourceManager | ✅ 已设计 | ✅ 已实现 | 资源统一管理 |
-| PECJAdapter (Plugin) | ✅ 已设计 | ✅ 已实现 | 传统插件模式 (Baseline) |
-| TimeSeriesDB 多表 API | ✅ 已设计 | ✅ 已实现 | createTable/insert/query |
-| EventBus | ⚠️ 部分设计 | ✅ 已实现 | 事件通知机制 |
-| GPU 资源管理 | ⚠️ 接口设计 | ❌ 未实现 | ResourceRequest 中预留 |
-| 分布式计算 | ❌ 未设计 | ❌ 未实现 | 后续扩展 |
-
-**代码完成度**: ~85% (核心功能完整，性能优化和分布式扩展待实现)
+> 文件名沿用历史上的 `DESIGN_DOC_SAGETSDB_PECJ.md`，用于保持已有文档链接可用；本文内容已重写为 sageTSDB 的总体设计文档，不再只描述 PECJ 集成。
 
 ## 摘要
 
-本文档描述将 PECJ 作为**纯计算引擎**深度融合到 sageTSDB 的方案。核心原则：
+sageTSDB 是一个以 C++ 核心为主、Python 绑定为辅的时序数据库与流处理实验平台。当前代码库的核心能力包括：
 
-1. **数据存储优先**：所有数据必须先写入 sageTSDB 的 Table（MemTable/LSM-Tree）
-2. **资源完全托管**：线程、内存、GPU、状态管理完全由 sageTSDB 控制
-3. **PECJ 无状态化**：PECJ 仅作为计算函数，不维护自己的数据缓冲区和生命周期
-4. **统一查询接口**：通过 sageTSDB 的 Query API 获取数据，而非直接 feed 数据到 PECJ
+- 基础时序数据模型、索引、查询和持久化。
+- 命名多表 API 与类型化 Stream/Join 表管理。
+- LSM-Tree 存储组件、WAL、SSTable、Bloom Filter 和 checkpoint 支持。
+- 资源统一管理，包括线程池、内存配额、任务提交和运行时使用上报。
+- 内置流处理算法，包括窗口聚合与流式 Join。
+- 插件模式，用于 PECJ、故障检测等适配器的独立生命周期管理。
+- compute 模式，用于无状态计算引擎，例如 SRTFD 诊断算子，以及可选的 PECJ 深度融合引擎。
+- pybind11 C++ 绑定和 Python fallback/service 层。
 
-这是一种**database-centric**设计，而非传统的插件模式。
+系统的长期方向是 database-centric：数据先进入 sageTSDB 表，计算只从表读取输入并将结果写回表；线程、内存和执行策略通过 `core::ResourceManager` 显式管理。
 
-## 设计目标
+## 当前实现状态
 
-- **数据中心化**：sageTSDB 是唯一的数据真相来源（Single Source of Truth）
-- **计算无状态化**：PECJ 作为纯函数计算引擎，不持有数据状态
-- **资源统一管理**：所有系统资源（线程、内存、GPU）由 sageTSDB ResourceManager 分配
-- **状态可观测**：PECJ 的执行状态、中间结果全部由 sageTSDB 管理和持久化
-- **可测试性**：PECJ 的计算逻辑可独立测试，不依赖复杂的数据管道
+| 模块 | 状态 | 主要文件 | 说明 |
+| --- | --- | --- | --- |
+| 时序数据模型 | 已实现 | `include/sage_tsdb/core/time_series_data.h` | 标量/向量值、tags、fields、时间范围和查询配置。 |
+| 默认索引与 DB API | 已实现 | `time_series_db.*`, `time_series_index.*` | 默认表 API 与命名多表 API 并存。 |
+| 持久化与 LSM-Tree | 已实现 | `storage_engine.*`, `lsm_tree.*` | StorageEngine 保持高层保存/加载/checkpoint API，底层使用 LSM 组件。 |
+| 类型化表系统 | 已实现 | `stream_table.*`, `join_result_table.*`, `table_manager.*` | StreamTable/JoinResultTable 用于计算管道和 PECJ 场景。 |
+| 资源管理 | 已实现 | `resource_manager.*` | 位于 `core/`，供插件和 compute engine 共用。 |
+| 算法框架 | 已实现 | `algorithms/` | `TimeSeriesAlgorithm`、`StreamJoin`、`WindowAggregator`。 |
+| 插件系统 | 已实现 | `plugins/` | `PluginManager`、`PluginRegistry`、`EventBus`、PECJ/FaultDetection adapters。 |
+| SRTFD compute engine | 已实现 | `srtfd_compute_engine.*` | 无状态窗口诊断，当前实现 `statistical` backend。 |
+| PECJ compute engine | 条件构建 | `pecj_compute_engine.*`, `window_scheduler.*` | 需 `SAGE_TSDB_ENABLE_PECJ=ON` 且 `PECJ_MODE=INTEGRATED`。当前主要返回窗口计算状态和指标；详细结果写表路径仍需继续收口。 |
+| ComputeStateManager | 已实现 | `compute_state_manager.*` | 通过 `_compute_state` 和 checkpoint 表保存计算状态。 |
+| Python 绑定 | 部分实现 | `sage_tsdb/bindings.cpp`, `sage_tsdb/__init__.py` | C++ core 类型绑定；Python fallback、算法和 service wrapper 总是可用。 |
+| Wheel/package | 已实现 | `pyproject.toml`, `sage_tsdb/` | Python runtime 依赖保持最小，当前为 `numpy`。 |
 
-## 系统架构图
+## 设计原则
 
-### 整体架构（Deep Integration Mode）
+1. **数据先入库**
+   外部数据进入 `TimeSeriesDB` 或类型化表后，计算引擎通过查询接口读取窗口数据。避免计算组件持有另一份长期输入缓冲。
 
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                          sageTSDB System                                 │
-├─────────────────────────────────────────────────────────────────────────┤
-│                                                                           │
-│  ┌────────────────────┐        ┌────────────────────┐                  │
-│  │  External Data     │        │  User Applications │                  │
-│  │  Sources           │        │                    │                  │
-│  └────────┬───────────┘        └─────────┬──────────┘                  │
-│           │                               │                              │
-│           ▼                               ▼                              │
-│  ┌─────────────────────────────────────────────────────┐               │
-│  │            TimeSeriesDB (Unified API)               │               │
-│  │  • createTable()  • insert()  • query()            │               │
-│  └─────────────────┬───────────────────────┬───────────┘               │
-│                    │                       │                            │
-│       ┌────────────┴──────────┐           │                            │
-│       ▼                       ▼            ▼                            │
-│  ┌─────────┐  ┌──────────┐  ┌───────────────┐                        │
-│  │Stream S │  │Stream R  │  │JoinResult     │                        │
-│  │Table    │  │Table     │  │Table          │                        │
-│  └────┬────┘  └────┬─────┘  └───────▲───────┘                        │
-│       │            │                 │                                 │
-│       └────────┬───┴─────────────────┘                                │
-│                │                                                        │
-│  ┌─────────────▼────────────────────────────────────┐                 │
-│  │          TableManager (Multi-Table)              │                 │
-│  │  ┌────────────┐  ┌──────────────┐               │                 │
-│  │  │MemTable    │→ │LSM-Tree      │               │                 │
-│  │  │(in-memory) │  │(persistence) │               │                 │
-│  │  └────────────┘  └──────────────┘               │                 │
-│  └──────────────────────────────────────────────────┘                 │
-│                    │                                                    │
-│                    ▼                                                    │
-│  ┌─────────────────────────────────────────────────────────┐          │
-│  │         PECJ Deep Integration Layer                      │          │
-│  ├─────────────────────────────────────────────────────────┤          │
-│  │                                                           │          │
-│  │  ┌──────────────────────────────────────────┐           │          │
-│  │  │   WindowScheduler (Auto Trigger)        │           │          │
-│  │  │  • Time-based trigger                   │           │          │
-│  │  │  • Count-based trigger                  │           │          │
-│  │  │  • Watermark management                 │           │          │
-│  │  └──────────────┬───────────────────────────┘           │          │
-│  │                 │                                        │          │
-│  │                 ▼                                        │          │
-│  │  ┌──────────────────────────────────────────┐           │          │
-│  │  │   PECJComputeEngine (Stateless)         │           │          │
-│  │  │  • No internal buffer                   │           │          │
-│  │  │  • Query data from tables               │           │          │
-│  │  │  • Execute PECJ algorithm               │           │          │
-│  │  │  • Write results back                   │           │          │
-│  │  └──────────────┬───────────────────────────┘           │          │
-│  │                 │                                        │          │
-│  │                 ▼                                        │          │
-│  │  ┌──────────────────────────────────────────┐           │          │
-│  │  │   PECJ Core Algorithm (OoOJoin)         │           │          │
-│  │  │  • IAWJ / PAWJ / MSWJ                   │           │          │
-│  │  │  • AQP fallback                         │           │          │
-│  │  │  • Linear SVI / VAE                     │           │          │
-│  │  └──────────────────────────────────────────┘           │          │
-│  │                                                           │          │
-│  └───────────────────────────────────────────────────────────┘          │
-│                    │                                                    │
-│  ┌─────────────────▼────────────────────────────────────┐             │
-│  │         ResourceManager (Unified Control)            │             │
-│  │  • Thread pool allocation                            │             │
-│  │  • Memory quota enforcement                          │             │
-│  │  • GPU device management (reserved)                  │             │
-│  │  • Task scheduling & monitoring                      │             │
-│  └──────────────────────────────────────────────────────┘             │
-│                    │                                                    │
-│  ┌─────────────────▼────────────────────────────────────┐             │
-│  │      ComputeStateManager (Persistence)               │             │
-│  │  • Checkpoint PECJ state                             │             │
-│  │  • Watermark recovery                                │             │
-│  │  • Window progress tracking                          │             │
-│  └──────────────────────────────────────────────────────┘             │
-│                    │                                                    │
-│  ┌─────────────────▼────────────────────────────────────┐             │
-│  │         EventBus (Notification)                      │             │
-│  │  • Window completed events                           │             │
-│  │  • Error notifications                               │             │
-│  │  • Metrics reporting                                 │             │
-│  └──────────────────────────────────────────────────────┘             │
-│                                                                          │
-└──────────────────────────────────────────────────────────────────────────┘
+2. **模式边界显式**
+   Baseline/plugin 模式与 integrated/compute 模式不能隐式互相 fallback。集成模式初始化失败应 fail-fast。
+
+3. **资源由 core 托管**
+   插件和计算引擎通过 `core::ResourceManager` 请求线程、内存和设备资源，避免自行创建不可观测的后台线程池。
+
+4. **计算引擎尽量无状态**
+   无状态引擎只保存配置、DB 指针、资源句柄和指标；窗口进度、watermark 或可恢复状态由表或 `ComputeStateManager` 管理。
+
+5. **可选依赖受构建开关控制**
+   PECJ/PyTorch 等重依赖只在构建选项启用时进入目标。基础 DB、算法和 Python fallback 不依赖 PECJ。
+
+6. **不引入跨仓库编排职责**
+   本仓库负责时序 DB、计算适配、绑定和 benchmark；上层业务工作流、跨仓库发布和环境编排不放入 sageTSDB 核心。
+
+## 总体架构
+
+```mermaid
+flowchart TB
+    App[Applications / Python / C++ demos]
+    Py[Python package\npybind11 + fallback + service]
+    DB[TimeSeriesDB\ndefault table + named tables]
+    Core[Core storage\nTimeSeriesIndex / StorageEngine / LSMTree]
+    Typed[Typed tables\nStreamTable / JoinResultTable / TableManager]
+    Algo[Algorithms\nStreamJoin / WindowAggregator]
+    Compute[Compute engines\nSRTFD / PECJ integrated / StateManager]
+    Plugins[Plugins\nPluginManager / EventBus / Adapters]
+    RM[ResourceManager\nthreads / memory / device hints]
+    Tests[Tests / Examples / Benchmarks]
+
+    App --> Py
+    App --> DB
+    Py --> DB
+    DB --> Core
+    DB --> Algo
+    DB --> Compute
+    Typed --> Core
+    Compute --> DB
+    Compute --> RM
+    Plugins --> RM
+    Plugins --> DB
+    Tests --> DB
+    Tests --> Compute
+    Tests --> Plugins
 ```
 
-### 双模式对比架构图
+### 目录边界
 
-```
-┌──────────────────────────────────────────────────────────────────────────┐
-│                     Plugin Mode (Baseline)                                │
-├──────────────────────────────────────────────────────────────────────────┤
-│                                                                            │
-│  External Data → PECJAdapter::feedData()                                 │
-│                       │                                                    │
-│                       ▼                                                    │
-│            ┌────────────────────┐                                         │
-│            │ PECJ Internal      │ ← PECJ manages own buffer & threads    │
-│            │ Data Queue         │                                         │
-│            └─────────┬──────────┘                                         │
-│                      │                                                     │
-│                      ▼                                                     │
-│            ┌────────────────────┐                                         │
-│            │ PECJ Worker Thread │ ← PECJ creates own threads             │
-│            │ (self-managed)     │                                         │
-│            └─────────┬──────────┘                                         │
-│                      │                                                     │
-│                      ▼                                                     │
-│            ┌────────────────────┐                                         │
-│            │ PECJ Algorithm     │                                         │
-│            └─────────┬──────────┘                                         │
-│                      │                                                     │
-│                      ▼                                                     │
-│            ┌────────────────────┐                                         │
-│            │ Results (callback) │                                         │
-│            └─────────┬──────────┘                                         │
-│                      │                                                     │
-│                      ▼                                                     │
-│            sageTSDB (optional storage)                                    │
-│                                                                            │
-│  Characteristics:                                                          │
-│  • Async feedData() interface                                            │
-│  • PECJ owns data lifecycle                                              │
-│  • 2x memory (PECJ buffer + DB)                                          │
-│  • Fast prototyping                                                      │
-│                                                                            │
-└──────────────────────────────────────────────────────────────────────────┘
+| 目录 | 职责 | 不应承担的职责 |
+| --- | --- | --- |
+| `include/sage_tsdb/core`, `src/core` | 数据模型、索引、存储、表、资源管理。 | 外部算法生命周期、业务流程编排。 |
+| `include/sage_tsdb/algorithms`, `src/algorithms` | 内置同步算法和算法注册机制。 | 资源调度、插件模式管理。 |
+| `include/sage_tsdb/compute`, `src/compute` | 无状态或可恢复计算引擎、窗口调度、计算状态持久化。 | 持有外部数据源生命周期，隐式启动长期 worker。 |
+| `include/sage_tsdb/plugins`, `src/plugins` | 插件适配、事件总线、baseline/integrated 插件生命周期。 | 替代 `core::ResourceManager` 或存储核心。 |
+| `sage_tsdb/` | Python 包、C++ 绑定 fallback、Python 算法和 service。 | C++ 构建选项或外部仓库安装编排。 |
+| `examples/`, `tests/`, `scripts/` | 示例、验证、benchmark、辅助脚本。 | 核心库公共 API。 |
+| `docs/` | 设计与模块文档。 | 与当前代码不一致的状态声明。 |
 
-┌──────────────────────────────────────────────────────────────────────────┐
-│                   Integrated Mode (Production)                            │
-├──────────────────────────────────────────────────────────────────────────┤
-│                                                                            │
-│  External Data → TimeSeriesDB::insert("stream_s", data)                  │
-│                       │                                                    │
-│                       ▼                                                    │
-│            ┌────────────────────┐                                         │
-│            │ StreamTable        │ ← Single source of truth               │
-│            │ (MemTable + LSM)   │                                         │
-│            └─────────┬──────────┘                                         │
-│                      │                                                     │
-│                      ▼ (watch insert events)                              │
-│            ┌────────────────────┐                                         │
-│            │ WindowScheduler    │ ← Auto trigger on condition            │
-│            └─────────┬──────────┘                                         │
-│                      │                                                     │
-│                      ▼ (submit task)                                      │
-│            ┌────────────────────┐                                         │
-│            │ ResourceManager    │ ← Unified resource control             │
-│            │ Thread Pool        │                                         │
-│            └─────────┬──────────┘                                         │
-│                      │                                                     │
-│                      ▼ (execute)                                          │
-│            ┌────────────────────┐                                         │
-│            │ PECJComputeEngine  │ ← Stateless compute function           │
-│            │ (no buffer/thread) │                                         │
-│            └─────────┬──────────┘                                         │
-│                      │                                                     │
-│                      │ query data                                         │
-│                      ▼                                                     │
-│            ┌────────────────────┐                                         │
-│            │ StreamTable query  │                                         │
-│            └─────────┬──────────┘                                         │
-│                      │                                                     │
-│                      ▼                                                     │
-│            ┌────────────────────┐                                         │
-│            │ PECJ Algorithm     │                                         │
-│            └─────────┬──────────┘                                         │
-│                      │                                                     │
-│                      ▼ write results                                      │
-│            ┌────────────────────┐                                         │
-│            │ JoinResultTable    │                                         │
-│            └─────────┬──────────┘                                         │
-│                      │                                                     │
-│                      ▼                                                     │
-│            EventBus notification                                          │
-│                                                                            │
-│  Characteristics:                                                          │
-│  • Sync insert() interface                                               │
-│  • DB owns all data                                                      │
-│  • 1x memory (single storage)                                            │
-│  • Production-grade control                                              │
-│                                                                            │
-└──────────────────────────────────────────────────────────────────────────┘
-```
+## 构建与目标组织
 
-## 架构原则
+根 `CMakeLists.txt` 定义以下主要目标：
 
-### 双模式设计（共存以支持性能对比实验）
+| Target | 默认/条件 | 内容 |
+| --- | --- | --- |
+| `sage_tsdb_core` | 默认 | resource manager、数据模型、索引、DB、storage engine、LSM、typed tables、config。 |
+| `sage_tsdb_algorithms` | 默认 | `StreamJoin` 和 `WindowAggregator`。 |
+| `sage_tsdb_compute` | 条件 | `SRTFDComputeEngine` 默认启用；PECJ integrated 由开关加入。 |
+| `sage_tsdb_plugins` | `BUILD_PLUGINS=ON` | plugin manager、PECJ adapter、fault detection adapter。 |
+| `_sage_tsdb` Python extension | `BUILD_PYTHON_BINDINGS=ON` 或 scikit-build | pybind11 绑定。 |
+| `sage_tsdb` | interface | 聚合 core 和 algorithms。 |
 
-**✅ 已实现**: CMake 支持 `-DPECJ_MODE=PLUGIN` 和 `-DPECJ_MODE=INTEGRATED`
+关键构建选项：
 
-本设计支持两种模式**同时存在**，通过预编译参数选择：
+| 选项 | 默认 | 作用 |
+| --- | --- | --- |
+| `BUILD_TESTS` | `ON` | 构建 GoogleTest 测试。 |
+| `BUILD_PYTHON_BINDINGS` | 非 scikit-build 默认 `OFF` | 构建 Python C++ extension。 |
+| `BUILD_PLUGINS` | `ON` | 构建插件系统。 |
+| `SAGE_TSDB_ENABLE_SRTFD` | `ON` | 将 SRTFD 无状态诊断引擎加入 `sage_tsdb_compute`。 |
+| `SAGE_TSDB_ENABLE_PECJ` | `OFF` | 启用 PECJ 相关 compute 目标。 |
+| `PECJ_MODE` | `INTEGRATED` | PECJ 模式，当前 CMake 重点支持 integrated compute 条件构建。 |
+| `PECJ_FULL_INTEGRATION` | `OFF` | 链接 PECJ 库和 Torch 后启用完整 PECJ 头/库路径。 |
+| `PECJ_DIR` | 未设置 | 外部 PECJ 源码/构建目录。 |
 
-#### 模式 1：传统插件模式（Baseline）
-```
-外部数据 → PluginManager → PECJ内部缓冲区 → PECJ计算 → 结果
-                ↓
-            sageTSDB存储（可选）
-```
-**特点**：
-- PECJ 维护独立的数据缓冲区（data_queue_）
-- PECJ 自行创建和管理线程
-- 数据异步 feedData() 方式输入
-- 适合：独立运行、快速原型验证
+注意：由于 PECJ/PyTorch ABI 兼容要求，根 CMake 当前统一定义 `_GLIBCXX_USE_CXX11_ABI=0`。
 
-**编译参数**：`-DPECJ_MODE=PLUGIN`
+## 数据模型和查询 API
 
-#### 模式 2：深度融合模式（Integrated）
-```
-外部数据 → sageTSDB Table (MemTable/LSM) → PECJ Compute Engine → 结果写回Table
-            ↑                                      ↓
-            └──────────── ResourceManager ────────┘
-                    (线程/内存/GPU/状态)
-```
-**特点**：
-- 数据单一存储在 sageTSDB 表中
-- PECJ 无状态纯计算引擎
-- 资源由 ResourceManager 统一管理
-- 适合：生产环境、大规模部署
+### TimeSeriesData
 
-**编译参数**：`-DPECJ_MODE=INTEGRATED`
+`TimeSeriesData` 是系统核心记录类型：
 
-### 模式对比表
+- `timestamp`: `int64_t` 时间戳。
+- `value`: `double` 或 `std::vector<double>`。
+- `tags`: 可索引字符串键值对，适合 sensor、asset、symbol、stream id 等过滤条件。
+- `fields`: 附加元数据，适合单位、原始标签、诊断置信度等非主要索引字段。
 
-| 维度 | 插件模式 (Baseline) | 深度融合模式 (Integrated) |
-|------|-------------------|------------------------|
-| **数据存储** | PECJ 缓冲区 + sageTSDB | 仅 sageTSDB 表 |
-| **数据输入** | `feedData()` 异步 | `db->insert()` 同步 |
-| **计算触发** | PECJ 内部轮询 | WindowScheduler 调度 |
-| **线程管理** | PECJ 自建线程 | ResourceManager 线程池 |
-| **内存占用** | 2x（重复存储） | 1x（单一存储） |
-| **资源控制** | 无全局配额 | 精确配额限制 |
-| **状态管理** | PECJ 内部状态 | sageTSDB 表持久化 |
-| **适用场景** | 原型验证、实验对比 | 生产环境、长期运行 |
-| **测试隔离** | 需要完整 sageTSDB | 可独立测试计算逻辑 |
+`as_double()` 对向量值返回第一个元素；`as_vector()` 对标量值返回单元素向量。
 
-## 关键设计决策
+### TimeRange 和 QueryConfig
 
-### 为什么需要双模式？
+`TimeRange` 使用 `[start_time, end_time]` 的 inclusive 语义；`QueryConfig` 包含时间范围、tag 过滤、聚合类型、窗口大小和 limit。
 
-| 需求 | 插件模式的优势 | 深度融合模式的优势 |
-|------|--------------|------------------|
-| **实验对比** | 提供性能基准（Baseline） | 验证优化效果 |
-| **灵活性** | 快速迭代、独立调试 | 生产级稳定性 |
-| **兼容性** | 兼容现有 PECJ 代码 | 深度集成 sageTSDB 特性 |
-| **部署场景** | 边缘设备、单机部署 | 数据中心、集群部署 |
-| **开发测试** | 无需完整 sageTSDB 环境 | 集成测试更真实 |
+### TimeSeriesDB 双层 API
 
-### 双模式实验对比的价值
+`TimeSeriesDB` 同时提供两类入口：
 
-**对比维度**：
-1. **吞吐量**：每秒处理的事件数 (events/sec)
-2. **延迟**：端到端延迟分布 (P50, P99, P999)
-3. **内存占用**：峰值内存和平均内存 (MB)
-4. **CPU 利用率**：线程数和 CPU 使用率 (%)
-5. **可扩展性**：增加流数量时的性能衰减
-6. **故障恢复**：重启后恢复时间 (ms)
+1. **默认表兼容 API**
+   - `add()` / `add_batch()` 写入默认 `TimeSeriesIndex`。
+   - `query()` 从默认索引查询。
+   - `register_algorithm()` / `apply_algorithm()` 运行内置算法。
 
-**实验参数**：
-- 数据规模：1M, 10M, 100M 事件
-- 窗口大小：1s, 5s, 10s
-- 乱序程度：0%, 10%, 30%
-- 并发流数：2, 4, 8
+2. **命名多表 API**
+   - `createTable(name, TableType)` 创建命名表。
+   - `insert(table_name, data)` 和 `insertBatch(table_name, data_list)` 写入命名表。
+   - `query(table_name, range, filter_tags)` 查询命名表。
 
-### 核心约束
+当前 `TimeSeriesDB` 的命名表底层是 `TimeSeriesIndex`，适合轻量多表使用。需要 StreamTable/JoinResultTable 的 LSM、窗口、结果聚合等专用能力时，应使用 `TableManager`。
 
-1. **PECJ 不持有数据**
-   - 所有输入数据从 sageTSDB 表查询
-   - 计算中间状态也存储在表中（而非内存）
-   - 结果立即写回表
+## 存储与表设计
 
-2. **PECJ 不创建线程**
-   - 使用 `ResourceHandle::submitTask()` 提交任务
-   - sageTSDB 的线程池执行任务
-   - 线程数严格受 `ResourceRequest::requested_threads` 限制
+### TimeSeriesIndex
 
-3. **PECJ 不管理生命周期**
-   - 由 sageTSDB 的 `ComputeScheduler` 调度执行
-   - 失败重试由 sageTSDB 控制
-   - 没有独立的 start/stop 语义
+`TimeSeriesIndex` 是默认 DB 和命名表的内存索引，支持插入、批量插入、按时间范围查询、按索引取数、清空和 size/empty 查询。
 
-## 核心组件设计
+### StorageEngine 和 LSM-Tree
 
-**实现说明**: 以下所有核心组件均已实现，代码位于：
-- `include/sage_tsdb/compute/`: 计算引擎头文件
-- `src/compute/`: 计算引擎实现
-- `include/sage_tsdb/core/`: 核心表和数据库接口
-- `src/core/`: 核心实现
+`StorageEngine` 暴露高层持久化 API：
 
-### 1. 数据流架构
+- `save()` / `load()`。
+- `append()`。
+- checkpoint 创建、恢复、列举和删除。
+- 存储路径和压缩开关。
+- 存储统计。
 
-**✅ 已实现**: StreamTable、JoinResultTable、TimeSeriesDB 多表 API 均已完成
+底层 LSM 组件包括 active/immutable MemTable、WAL、SSTable、Bloom Filter、level compaction 和查询合并。文档详见 `docs/core/LSM_TREE_IMPLEMENTATION.md` 和 `docs/core/PERSISTENCE.md`。
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                        sageTSDB Core                         │
-├─────────────────────────────────────────────────────────────┤
-│  外部数据                                                     │
-│     ↓                                                        │
-│  [MemTable] → [Immutable MemTable] → [LSM-Tree Level 0-N]  │
-│     ↓            ↓                      ↓                    │
-│     └────────────┴──────────────────────┘                   │
-│                  ↓                                           │
-│          [TimeSeriesDB Query API]                           │
-│                  ↓                                           │
-│     ┌────────────┴─────────────┐                           │
-│     ↓                           ↓                            │
-│ [Stream S Table]          [Stream R Table]                  │
-│     ↓                           ↓                            │
-│     └────────────┬──────────────┘                           │
-│                  ↓                                           │
-│         [PECJ Compute Engine]                               │
-│           (无状态计算函数)                                     │
-│                  ↓                                           │
-│         [Join Result Table]                                 │
-│                  ↓                                           │
-│         [EventBus 通知下游]                                  │
-└─────────────────────────────────────────────────────────────┘
+### StreamTable
+
+`StreamTable` 是面向流输入的类型化表：
+
+- 支持乱序插入和范围查询。
+- 通过 MemTable + Immutable MemTable + LSM-Tree 管理数据。
+- 支持标签索引、窗口查询、最新 N 条查询、count 查询。
+- 提供 flush、compact、clear 和表级统计。
+
+### JoinResultTable
+
+`JoinResultTable` 复用 StreamTable 存储窗口级 Join 结果，包含：
+
+- `window_id`、timestamp、join count、AQP estimate、selectivity。
+- 序列化 payload。
+- computation metrics。
+- 按窗口、时间范围、标签、最近 N 个窗口查询。
+- 聚合统计、旧结果删除和表级统计。
+
+### TableManager
+
+`TableManager` 统一管理类型化表：
+
+- `createStreamTable()`、`createJoinResultTable()`、`createPECJTables()`。
+- 类型安全访问 `getStreamTable()`、`getJoinResultTable()`。
+- 批量插入/查询、保存/加载所有表、checkpoint 开关。
+- 全局统计、flush/compact 所有表和全局内存限制。
+
+## 资源管理
+
+`core::ResourceManager` 是跨插件和 compute engine 的资源入口。主要抽象：
+
+- `ResourceRequest`: 请求线程数、内存软/硬限制、GPU id、model path 和优先级。
+- `ResourceUsage`: 当前线程、内存、队列长度、吞吐、延迟和错误。
+- `ResourceHandle`: 异步提交任务、检查有效性、查询实际分配、上报使用情况。
+- `ResourceManager`: allocate/release/query/adjustQuota/global limits/pressure 检测，以及 compute 专用的 `allocateForCompute()` / `releaseCompute()` / `getComputeUsage()` / `throttleCompute()`。
+
+设计约束：
+
+- integrated 模式必须显式获得 resource handle。
+- 插件和计算引擎不应绕过 ResourceManager 创建不可控线程池。
+- GPU 资源字段目前是接口预留，实际设备调度仍需后续实现。
+
+## 算法层
+
+算法层提供同步、库内、轻量的时序处理能力：
+
+- `TimeSeriesAlgorithm`: 抽象基类，定义 `process()`、`reset()`、`get_stats()` 和 key-value config。
+- `AlgorithmFactory` 与 `REGISTER_ALGORITHM`: 用于算法注册和按名称创建。
+- `StreamJoin`: 时间窗口内的双流 Join，支持乱序场景的基础处理。
+- `WindowAggregator`: 支持 SUM、AVG、COUNT、MIN、MAX 等窗口聚合。
+
+算法层适合直接在调用方内同步执行；需要资源隔离、状态恢复、插件生命周期或外部算法适配时，应使用 compute 或 plugins 层。
+
+## Compute 层
+
+compute 层是 database-centric 的计算引擎层。它与插件层的区别是：compute engine 不通过 `feedData()` 长期接收数据，而是在执行窗口任务时从 DB/表查询输入。
+
+### SRTFDComputeEngine
+
+当前 SRTFD 是默认启用的无状态诊断算子：
+
+- 入口: `SRTFDComputeEngine::initialize(config, db, resource_handle)`。
+- 执行: `executeWindowDiagnosis(window_id, TimeRange)`。
+- 输入表: 默认 `sensor_events`。
+- 输出表: 默认 `srtfd_results`。
+- 当前 backend: `statistical`，用于无模型文件环境下的稳定测试。
+- 预留 backend: `torchscript`、`external`，当前 fail-fast，待接入模型 artifact。
+
+执行流程：
+
+```mermaid
+sequenceDiagram
+    participant Source as External sensor source
+    participant DB as TimeSeriesDB
+    participant SRTFD as SRTFDComputeEngine
+    participant Results as srtfd_results
+
+    Source->>DB: insert("sensor_events", TimeSeriesData(vector))
+    SRTFD->>DB: query("sensor_events", time_range)
+    SRTFD->>SRTFD: validate feature dimension
+    SRTFD->>SRTFD: run statistical backend
+    SRTFD->>DB: insert("srtfd_results", diagnosis)
+    DB-->>Results: queryable diagnosis rows
 ```
 
-#### 关键约束：
-1. **数据必须先入表**：外部数据先写入 `StreamSTable` 或 `StreamRTable`
-2. **PECJ 从表读取**：通过 `TimeSeriesDB::query()` 获取窗口内数据
-3. **结果写回表**：Join 结果写入 `JoinResultTable`，不直接返回给调用方
+SRTFD 不持有训练 buffer、optimizer、伪标签或 continual-learning 任务状态。SRTFD 原仓库的训练流程仍在外部维护；sageTSDB 侧只接入推理/诊断语义。
 
-### 2. PECJ 计算引擎接口（新设计）
+### PECJComputeEngine
 
-**✅ 已实现**: `include/sage_tsdb/compute/pecj_compute_engine.h` 和 `src/compute/pecj_compute_engine.cpp`
-
-**实现完成度**:
-- ✅ 核心接口 (initialize, executeWindowJoin, getMetrics, reset)
-- ✅ 数据格式转换 (convertFromTable, convertToTable)
-- ✅ 超时保护 (executeWithTimeout)
-- ✅ AQP 降级 (fallbackToAQP)
-- ✅ 指标收集 (updateMetrics)
-- ✅ 内存限制检查 (checkMemoryLimit)
-- ⚠️ 条件编译支持 (PECJ_MODE_INTEGRATED, PECJ_FULL_INTEGRATION)
-
-PECJ 不再是一个有状态的插件，而是一个**纯函数计算引擎**：
-
-```cpp
-namespace sage_tsdb {
-namespace compute {
-
-/**
- * @brief PECJ 计算引擎（无状态）
- * 
- * 设计原则：
- * - 不持有任何数据缓冲区
- * - 不创建线程（使用 ResourceHandle 提交任务）
- * - 不管理生命周期（由 sageTSDB 调度）
- * - 计算结果写回 sageTSDB 表
- */
-class PECJComputeEngine {
-public:
-    /**
-     * @brief 初始化计算引擎（一次性配置）
-     * @param config 算法参数（窗口大小、延迟阈值等）
-     * @param db 指向 TimeSeriesDB 的引用（用于读写数据）
-     * @param resource_handle 资源句柄（用于提交计算任务）
-     */
-    bool initialize(const ComputeConfig& config,
-                   TimeSeriesDB* db,
-                   ResourceHandle* resource_handle);
-    
-    /**
-     * @brief 执行窗口 Join 计算（同步调用）
-     * @param window_id 窗口标识符
-     * @param time_range 时间范围 [start, end)
-     * @return 计算状态（成功/失败/部分完成）
-     * 
-     * 执行流程：
-     * 1. 从 db 查询 StreamS 和 StreamR 在 time_range 内的数据
-     * 2. 调用 PECJ 核心算法执行 Join
-     * 3. 将结果写入 db 的 JoinResultTable
-     * 4. 返回计算统计信息
-     */
-    ComputeStatus executeWindowJoin(uint64_t window_id,
-                                    const TimeRange& time_range);
-    
-    /**
-     * @brief 获取计算统计（资源使用、延迟等）
-     */
-    ComputeMetrics getMetrics() const;
-    
-    /**
-     * @brief 重置计算状态（清除缓存、重置计数器）
-     */
-    void reset();
-
-private:
-    TimeSeriesDB* db_;                        // 数据库引用（不拥有）
-    ResourceHandle* resource_handle_;         // 资源句柄（不拥有）
-    ComputeConfig config_;                    // 算法配置
-    
-    // PECJ 核心算法对象（轻量级，无状态）
-    std::unique_ptr<OoOJoin::AbstractOperator> pecj_operator_;
-};
-
-} // namespace compute
-} // namespace sage_tsdb
-```
-
-### 3. sageTSDB 表设计
-
-**✅ 已实现**: 所有表类型均已实现
-
-**实现文件**:
-- `include/sage_tsdb/core/stream_table.h` + `src/core/stream_table.cpp`
-- `include/sage_tsdb/core/join_result_table.h` + `src/core/join_result_table.cpp`
-- `include/sage_tsdb/core/lsm_tree.h` + `src/core/lsm_tree.cpp` (持久化支持)
-
-#### 3.1 Stream 表（输入）
-
-**✅ 已实现**: 完整的 MemTable + LSM-Tree 架构
-```cpp
-// Stream S 和 Stream R 各自独立的表
-class StreamTable {
-public:
-    // 标准 sageTSDB 表接口
-    size_t insert(const TimeSeriesData& data);
-    std::vector<TimeSeriesData> query(const TimeRange& range, 
-                                      const Tags& filter_tags = {});
-    void createIndex(const std::string& field_name);
-    
-    // 窗口语义支持
-    std::vector<TimeSeriesData> queryWindow(uint64_t window_id);
-};
-
-// sageTSDB 中注册两个表
-db->createTable("stream_s", StreamTable);
-db->createTable("stream_r", StreamTable);
-```
-
-#### 3.2 Join 结果表（输出）
-
-**✅ 已实现**: 支持详细的 Join 结果存储和查询
-
-**实现特性**:
-- ✅ JoinRecord 结构 (window_id, join_count, aqp_estimate, payload)
-- ✅ 计算指标存储 (computation_time, memory_used, threads_used)
-- ✅ Payload 序列化/反序列化
-- ✅ 按窗口和时间范围查询
-- ✅ 标签过滤支持
-```cpp
-class JoinResultTable {
-public:
-    // 存储 Join 结果的结构
-    struct JoinRecord {
-        uint64_t window_id;
-        int64_t timestamp;
-        size_t join_count;        // 精确 Join 结果数
-        double aqp_estimate;      // AQP 估计值
-        std::vector<uint8_t> payload;  // 序列化的详细结果
-    };
-    
-    size_t insertJoinResult(const JoinRecord& record);
-    std::vector<JoinRecord> queryByWindow(uint64_t window_id);
-};
-```
-
-### 4. ResourceManager 深度集成
-
-**✅ 已实现**: `include/sage_tsdb/core/resource_manager.h` 和 `src/core/resource_manager.cpp`
-
-**📍 重构说明**: ResourceManager 已从 `plugins/` 目录迁移到 `core/` 目录 (2024-12-14)
-- **原因**: ResourceManager 是跨模式的核心基础设施，服务于插件模式和融合模式
-- **命名空间**: 从 `sage_tsdb::plugins` 更改为 `sage_tsdb::core`
-- **功能不变**: API 接口保持完全兼容，仅更改了模块组织结构
-
-**实现完成度**:
-- ✅ 资源分配接口 (allocate, release)
-- ✅ 线程池管理 (submitTask)
-- ✅ 内存配额控制 (max_memory_bytes, critical_memory_bytes)
-- ✅ 使用情况监控 (queryUsage, getTotalUsage)
-- ✅ 优先级调度 (priority hint)
-- ⚠️ GPU 资源管理 (接口已预留，实现待完成)
-
-**新增但文档未提及的功能**:
-- ✅ ResourceHandle::isValid() - 资源句柄有效性检查
-- ✅ ResourceHandle::getAllocated() - 查询实际分配的资源
-- ✅ 动态配额调整 (adjustQuota) - 运行时修改资源限制
-
-```cpp
-class ResourceManager {
-public:
-    /**
-     * @brief 为 PECJ 分配计算资源
-     * @param compute_name 计算引擎名称（如 "pecj_engine"）
-     * @param request 资源请求
-     * @return 资源句柄
-     */
-    std::shared_ptr<ResourceHandle> allocateForCompute(
-        const std::string& compute_name,
-        const ResourceRequest& request);
-    
-    /**
-     * @brief 监控 PECJ 资源使用
-     */
-    ResourceUsage getComputeUsage(const std::string& compute_name) const;
-    
-    /**
-     * @brief 强制限流（当资源超限时）
-     */
-    void throttleCompute(const std::string& compute_name, double factor);
-};
-```
-
-### 5. WindowScheduler（窗口调度器）
-
-**✅ 已实现**: `include/sage_tsdb/compute/window_scheduler.h` 和 `src/compute/window_scheduler.cpp`
-
-**实现完成度**:
-- ✅ 触发策略 (TimeBased, CountBased, Hybrid, Manual)
-- ✅ 窗口类型 (Tumbling, Sliding, Session)
-- ✅ Watermark 管理
-- ✅ 延迟数据处理
-- ✅ 并发窗口控制
-- ✅ 自适应调度 (enable_adaptive_scheduling)
-- ✅ 窗口状态跟踪 (WindowInfo)
-- ✅ 调度指标收集 (SchedulingMetrics)
-- ✅ 回调通知机制 (WindowCallback)
-
-**设计文档中未详细描述但已实现的功能**:
-- ✅ 表插入监听 (watchTable)
-- ✅ 待处理窗口队列 (max_pending_windows)
-- ✅ 窗口生命周期管理 (created_at, triggered_at, completed_at)
-- ✅ 延迟数据重计算 (late_windows_recomputed)
-
-### 6. 状态管理（由 sageTSDB 负责）
-
-**✅ 已实现**: `include/sage_tsdb/compute/compute_state_manager.h` 和 `src/compute/compute_state_manager.cpp`
-
-**实现完成度**:
-- ✅ 状态保存/加载 (saveState, loadState)
-- ✅ 状态存在性检查 (hasState)
-- ✅ 状态删除 (deleteState)
-- ✅ 持久化到磁盘 (persistState)
-- ✅ 状态恢复 (recoverState)
-- ✅ 状态版本管理
-- ✅ 线程安全访问
-
-```cpp
-class ComputeStateManager {
-public:
-    /**
-     * @brief 保存 PECJ 中间状态到表
-     * @param compute_name 计算引擎名称
-     * @param state 状态数据（序列化后）
-     */
-    bool saveState(const std::string& compute_name, 
-                  const std::vector<uint8_t>& state);
-    
-    /**
-     * @brief 恢复 PECJ 状态
-     */
-    std::vector<uint8_t> loadState(const std::string& compute_name);
-    
-    /**
-     * @brief 持久化到磁盘（通过 LSM-Tree）
-     */
-    bool persistState(const std::string& compute_name);
-};
-```
-
-### 7. EventBus（事件通知）
-
-**✅ 已实现**: `include/sage_tsdb/plugins/event_bus.h`
-
-**实现完成度**:
-- ✅ 事件发布/订阅机制
-- ✅ 窗口完成通知
-- ✅ 错误通知
-- ✅ 指标报告事件
-- ✅ 多订阅者支持
-- ✅ 线程安全
-
-**设计文档中未提及但已实现**:
-- ✅ 事件优先级
-- ✅ 事件过滤器
-- ✅ 异步事件处理
-
-### 8. PECJAdapter（插件模式）
-
-**✅ 已实现**: `include/sage_tsdb/plugins/adapters/pecj_adapter.h` 和 `src/plugins/adapters/pecj_adapter.cpp`
-
-**实现完成度**:
-- ✅ 异步数据输入 (feedStreamS, feedStreamR)
-- ✅ 内部数据队列管理
-- ✅ 独立工作线程
-- ✅ 窗口配置 (WindowConfig)
-- ✅ 多种算子支持 (IAWJ, MSWJ, AI, LINEAR_SVI 等)
-- ✅ ResourceManager 集成
-- ✅ 事件回调机制
-- ✅ 性能指标收集
-
-## 使用示例
-
-**📝 示例代码可运行**: 完整示例位于 `examples/deep_integration_demo.cpp` 和 `examples/window_scheduler_demo.cpp`
-
-### 场景：实时股票交易流 Join
-
-```cpp
-// 1. 初始化 sageTSDB
-TimeSeriesDB db;
-db.enablePersistence("/data/sage_tsdb");
-
-// 2. 创建 Stream 表
-db.createTable("stock_orders", TableType::TimeSeries);
-db.createTable("stock_trades", TableType::TimeSeries);
-db.createTable("join_results", TableType::TimeSeries);
-
-// 3. 初始化 PECJ 计算引擎
-ComputeConfig pecj_config;
-pecj_config.window_len_us = 1000000;  // 1秒窗口
-pecj_config.slide_len_us = 500000;    // 500ms 滑动
-pecj_config.operator_type = OperatorType::IAWJ;
-
-ResourceRequest resource_req;
-resource_req.requested_threads = 4;
-resource_req.max_memory_bytes = 2ULL * 1024 * 1024 * 1024;  // 2GB
-
-auto resource_handle = db.getResourceManager()->allocateForCompute(
-    "pecj_engine", resource_req);
-
-PECJComputeEngine pecj_engine;
-pecj_engine.initialize(pecj_config, &db, resource_handle.get());
-
-// 4. 数据写入（由外部数据源驱动）
-void onOrderData(const TimeSeriesData& data) {
-    db.insert("stock_orders", data);
-}
-
-void onTradeData(const TimeSeriesData& data) {
-    db.insert("stock_trades", data);
-}
-
-// 5. 定期触发窗口计算（由 sageTSDB 的 WindowScheduler 驱动）
-void onWindowTrigger(uint64_t window_id, const TimeRange& range) {
-    // 异步提交计算任务（不阻塞数据写入）
-    resource_handle->submitTask([&, window_id, range]() {
-        auto status = pecj_engine.executeWindowJoin(window_id, range);
-        
-        if (status.success) {
-            // 结果已写入 join_results 表
-            LOG_INFO("Window {} completed: {} joins", 
-                     window_id, status.join_count);
-            
-            // 通知下游应用（可选）
-            db.getEventBus()->publish("window_completed", status);
-        }
-    });
-}
-
-// 6. 查询 Join 结果
-auto results = db.query("join_results", QueryConfig{
-    .time_range = {now - 3600000, now},  // 最近1小时
-    .filter_tags = {{"symbol", "AAPL"}}
-});
-
-// 7. 监控资源使用
-auto metrics = db.getResourceManager()->getComputeUsage("pecj_engine");
-LOG_INFO("PECJ: threads={}, memory={}MB, latency={}ms",
-         metrics.threads_used,
-         metrics.memory_used_bytes / 1024 / 1024,
-         metrics.avg_latency_ms);
-```
-
-## 实施路线（分阶段迁移）
-
-### Phase 1: 基础设施准备（1-2周）
-1. **扩展 TimeSeriesDB 接口**
-   - 添加 `createTable(name, type)` API
-   - 支持多表独立存储（stream_s, stream_r, join_results）
-   - 实现表级别的 query/insert
-
-2. **实现 ComputeStateManager**
-   - 状态序列化/反序列化
-   - 通过 LSM-Tree 持久化
-
-3. **扩展 ResourceManager**
-   - 添加 `allocateForCompute()` 接口
-   - 实现计算任务的资源隔离
-
-### Phase 2: PECJ 无状态化改造（2-3周）
-1. **重构 PECJAdapter → PECJComputeEngine**
-   - 移除内部数据队列（`data_queue_`）
-   - 移除工作线程（`worker_thread_`）
-   - 仅保留核心算法调用
-
-2. **实现数据适配层**
-   ```cpp
-   // 从 sageTSDB 格式转换为 PECJ TrackTuple
-   std::vector<TrackTuple> convertFromTable(
-       const std::vector<TimeSeriesData>& db_data);
-   
-   // 从 PECJ 结果转换为 sageTSDB 格式
-   std::vector<TimeSeriesData> convertToTable(
-       const JoinResult& pecj_result);
-   ```
-
-3. **集成测试**
-   - 单元测试：验证计算正确性（不依赖 sageTSDB）
-   - 集成测试：验证 sageTSDB 表读写一致性
-
-### Phase 3: 窗口调度集成（1-2周）
-1. **实现 WindowScheduler**
-   ```cpp
-   class WindowScheduler {
-   public:
-       // 基于时间或数据量触发窗口计算
-       void scheduleWindow(uint64_t window_id, const TimeRange& range);
-       
-       // 监听表的插入事件，自动触发窗口
-       void watchTable(const std::string& table_name);
-   };
-   ```
-
-2. **事件驱动集成**
-   - 数据插入 → 触发窗口检查
-   - 窗口完整 → 提交 PECJ 计算任务
-   - 计算完成 → 发布 EventBus 通知
-
-### Phase 4: 性能优化与监控（1周）
-1. **批量查询优化**
-   - 预取窗口数据到 MemTable
-   - SIMD 加速数据转换
-
-2. **资源监控完善**
-   - 实时监控 PECJ 计算延迟
-   - 自动降级（超时切换到 AQP 模式）
-
-3. **持久化策略**
-   - 定期 checkpoint PECJ 状态
-   - 支持故障恢复
-
-## 迁移对比
-
-| 维度 | 旧插件模式 | 新深度融合模式 |
-|------|-----------|---------------|
-| **数据存储** | PECJ 内部缓冲区 + sageTSDB | 仅 sageTSDB Table |
-| **资源管理** | PECJ 自行创建线程 | sageTSDB ResourceManager |
-| **状态管理** | PECJ 内部状态 | sageTSDB ComputeStateManager |
-| **接口模式** | 异步 feedData() | 同步 executeWindowJoin() |
-| **测试隔离** | 需要完整 sageTSDB | 可独立测试计算逻辑 |
-| **内存占用** | 双份数据（PECJ + DB） | 单份数据 |
-| **故障恢复** | 复杂（需恢复 PECJ 状态） | 简单（仅恢复表数据） |
-
-## 验证要点（验收准则）
-
-### 功能验证
-- [✅] 数据写入 stream_s/stream_r 表后可查询 - **已验证**: `examples/deep_integration_demo.cpp`
-- [✅] PECJ 能从表中正确读取窗口数据 - **已实现**: `PECJComputeEngine::executeWindowJoin()`
-- [✅] Join 结果正确写入 join_results 表 - **已实现**: `writeResults()` 方法
-- [✅] WindowScheduler 能自动触发窗口计算 - **已验证**: `examples/window_scheduler_demo.cpp`
-- [⚠️] 支持多窗口并发计算（资源隔离） - **部分验证**: ResourceManager 支持，需要集成测试
-
-### 性能验证
-- [⏳] 吞吐量不低于旧模式的 90% - **待测试**: 需运行 `performance_benchmark`
-- [⏳] 端到端延迟（数据写入 → Join 完成）<100ms (P99) - **待测试**
-- [⏳] 内存占用减少 30%+（消除重复缓冲） - **待测试**
-- [✅] 线程数精确控制在配额内 - **已实现**: ResourceManager 强制执行
-
-### 可靠性验证
-- [✅] 支持 PECJ 计算失败后重试（从表重新读取） - **已实现**: `executeWindowJoin()` 异常处理
-- [✅] 支持 sageTSDB 重启后状态恢复 - **已实现**: `ComputeStateManager::recoverState()`
-- [⚠️] 资源超限时自动降级（AQP 模式） - **部分实现**: `fallbackToAQP()` 已有，触发逻辑需完善
-- [✅] 监控指标完整（延迟、吞吐、错误率） - **已实现**: `ComputeMetrics` + `SchedulingMetrics`
-
-**测试覆盖率**: ~70%
-- ✅ 单元测试: `tests/test_pecj_plugin.cpp`, `tests/test_window_scheduler.cpp`
-- ✅ 集成测试: `tests/test_integrated_mode.cpp`
-- ⏳ 性能测试: 框架已有，需大规模数据集验证
-- ⏳ 压力测试: 待补充
-
-## 已实现但文档未涵盖的功能
-
-### 1. FaultDetectionAdapter
-**位置**: `include/sage_tsdb/plugins/adapters/fault_detection_adapter.h`
-
-另一个算法插件，用于工业 IoT 故障检测：
-- 实时传感器数据分析
-- 异常检测算法
-- 与 PECJ 类似的插件架构
-
-### 2. TableManager
-**位置**: `include/sage_tsdb/core/table_manager.h` + `src/core/table_manager.cpp`
-
-多表管理器，负责：
-- 表创建和销毁的集中管理
-- 表名到表实例的映射
-- 表类型（Stream, JoinResult, ComputeState）路由
-- 内存和磁盘资源协调
-
-### 3. PluginManager
-**位置**: `include/sage_tsdb/plugins/plugin_manager.h` + `src/plugins/plugin_manager.cpp`
-
-插件生命周期管理器：
-- 动态插件加载/卸载
-- 插件依赖管理
-- 插件间通信协调
-- ResourceManager 的创建和分配
-
-### 4. 持久化层完整实现
-**LSM-Tree**: `include/sage_tsdb/core/lsm_tree.h` + `src/core/lsm_tree.cpp`
-- 多级合并策略
-- 压缩和去重
-- WAL (Write-Ahead Log) 支持
-- 崩溃恢复机制
-
-### 5. 索引系统
-**TimeSeriesIndex**: `include/sage_tsdb/core/time_series_index.h` + `src/core/time_series_index.cpp`
-- 时间戳索引 (B+ Tree)
-- 标签倒排索引
-- 复合查询优化
-
-### 6. Python 绑定（部分）
-**位置**: `python/bindings.cpp`
-- 基础的 Python 接口暴露
-- 支持数据插入和查询
-- ⚠️ PECJ 计算接口尚未完全绑定
-
-### 7. 性能基准测试框架
-**位置**: `examples/performance_benchmark.cpp`
-- 吞吐量测试
-- 延迟分布统计
-- 内存占用监控
-- CPU 使用率采样
-
-## CMake 构建配置（支持双模式）
-
-**✅ 已实现**: 完整的双模式构建系统
-
-**实现文件**: `CMakeLists.txt` (根目录)
-
-**实现特性**:
-- ✅ PECJ_MODE 选择 (PLUGIN / INTEGRATED)
-- ✅ PECJ_FULL_INTEGRATION 开关
-- ✅ 条件编译宏 (PECJ_MODE_PLUGIN, PECJ_MODE_INTEGRATED)
-- ✅ 自动查找 PECJ 库和 Torch
-- ✅ 模块化构建 (sage_tsdb_core, sage_tsdb_compute, sage_tsdb_plugins)
-
-### 预编译参数
-
-```cmake
-# ========== PECJ 集成总开关 ==========
-option(SAGE_TSDB_ENABLE_PECJ "Enable PECJ integration" OFF)
-
-# ========== PECJ 运行模式选择 ==========
-set(PECJ_MODE "PLUGIN" CACHE STRING "PECJ integration mode: PLUGIN or INTEGRATED")
-set_property(CACHE PECJ_MODE PROPERTY STRINGS "PLUGIN" "INTEGRATED")
-
-# ========== PECJ 源码路径 ==========
-set(PECJ_DIR "" CACHE PATH "Path to PECJ source or build directory")
-
-if(SAGE_TSDB_ENABLE_PECJ)
-    message(STATUS "PECJ Integration Enabled: Mode=${PECJ_MODE}")
-    
-    # 查找 PECJ 库
-    find_package(PECJ REQUIRED PATHS ${PECJ_DIR})
-    
-    # 根据模式定义不同的编译宏
-    if(PECJ_MODE STREQUAL "PLUGIN")
-        add_definitions(-DPECJ_MODE_PLUGIN)
-        message(STATUS "  - Using PLUGIN mode (traditional adapter)")
-        
-        # 构建传统插件模式
-        add_library(sage_tsdb_pecj_plugin
-            src/plugins/adapters/pecj_adapter.cpp
-            src/plugins/adapters/pecj_plugin_impl.cpp
-        )
-        target_link_libraries(sage_tsdb_pecj_plugin 
-            PRIVATE PECJ::core
-            PRIVATE sage_tsdb_core
-        )
-        
-    elseif(PECJ_MODE STREQUAL "INTEGRATED")
-        add_definitions(-DPECJ_MODE_INTEGRATED)
-        message(STATUS "  - Using INTEGRATED mode (deep fusion)")
-        
-        # 构建深度融合模式
-        add_library(sage_tsdb_pecj_engine
-            src/compute/pecj_compute_engine.cpp
-            src/compute/pecj_data_adapter.cpp
-            src/compute/window_scheduler.cpp
-            src/compute/compute_state_manager.cpp
-        )
-        target_link_libraries(sage_tsdb_pecj_engine 
-            PRIVATE PECJ::core
-            PRIVATE sage_tsdb_core
-        )
-        
-    else()
-        message(FATAL_ERROR "Invalid PECJ_MODE: ${PECJ_MODE}. Must be PLUGIN or INTEGRATED")
-    endif()
-    
-    # 通用编译宏（两种模式都需要）
-    add_definitions(-DPECJ_FULL_INTEGRATION)
-    
-else()
-    message(STATUS "PECJ Integration Disabled - using stub implementation")
-    add_definitions(-DPECJ_STUB_MODE)
-endif()
-```
-
-### 构建示例
-
-#### 示例 1：构建插件模式（用于性能基准）
-```bash
-cd sageTSDB/build
-cmake .. \
-    -DSAGE_TSDB_ENABLE_PECJ=ON \
-    -DPECJ_MODE=PLUGIN \
-    -DPECJ_DIR=/path/to/PECJ
-make -j8
-```
-
-#### 示例 2：构建深度融合模式（用于生产）
-```bash
-cd sageTSDB/build
-cmake .. \
-    -DSAGE_TSDB_ENABLE_PECJ=ON \
-    -DPECJ_MODE=INTEGRATED \
-    -DPECJ_DIR=/path/to/PECJ
-make -j8
-```
-
-#### 示例 3：构建两种模式用于对比实验
-```bash
-# 构建插件模式
-mkdir -p build_plugin && cd build_plugin
-cmake .. -DSAGE_TSDB_ENABLE_PECJ=ON -DPECJ_MODE=PLUGIN -DPECJ_DIR=/path/to/PECJ
-make -j8
-
-# 构建深度融合模式
-cd ..
-mkdir -p build_integrated && cd build_integrated
-cmake .. -DSAGE_TSDB_ENABLE_PECJ=ON -DPECJ_MODE=INTEGRATED -DPECJ_DIR=/path/to/PECJ
-make -j8
-
-# 运行性能对比
-./build_plugin/bin/pecj_benchmark > results_plugin.txt
-./build_integrated/bin/pecj_benchmark > results_integrated.txt
-python scripts/compare_performance.py results_plugin.txt results_integrated.txt
-```
-
-### 代码中的条件编译
-
-```cpp
-// ========== include/sage_tsdb/pecj_integration.h ==========
-#pragma once
-
-#ifdef PECJ_MODE_PLUGIN
-    // 传统插件模式头文件
-    #include "plugins/adapters/pecj_adapter.h"
-    using PECJInterface = sage_tsdb::plugins::PECJAdapter;
-    
-#elif defined(PECJ_MODE_INTEGRATED)
-    // 深度融合模式头文件
-    #include "compute/pecj_compute_engine.h"
-    using PECJInterface = sage_tsdb::compute::PECJComputeEngine;
-    
-#else
-    // Stub 模式（无 PECJ）
-    #include "plugins/adapters/pecj_stub.h"
-    using PECJInterface = sage_tsdb::plugins::PECJStub;
-#endif
-
-// ========== 使用统一接口 ==========
-class TimeSeriesDB {
-public:
-    void setupPECJ(const Config& config) {
-        #ifdef PECJ_MODE_PLUGIN
-            // 插件模式初始化
-            pecj_ = std::make_unique<PECJAdapter>(config);
-            pecj_->initialize(config);
-            pecj_->start();
-            
-        #elif defined(PECJ_MODE_INTEGRATED)
-            // 深度融合模式初始化
-            auto handle = resource_manager_->allocateForCompute("pecj", resource_req);
-            pecj_ = std::make_unique<PECJComputeEngine>();
-            pecj_->initialize(config, this, handle.get());
-            
-        #else
-            // Stub 模式
-            pecj_ = std::make_unique<PECJStub>();
-        #endif
-    }
-    
-private:
-    std::unique_ptr<PECJInterface> pecj_;
-};
-```
-
-## 性能对比实验指南
-
-### 实验环境准备
+PECJ integrated 模式由以下条件启用：
 
 ```bash
-# 1. 构建两种模式
-./scripts/build_dual_mode.sh
-
-# 2. 生成测试数据集
-./scripts/generate_test_data.sh \
-    --events 10000000 \
-    --out-of-order-ratio 0.2 \
-    --streams 2
-
-# 3. 运行性能测试
-./scripts/run_benchmark.sh \
-    --mode both \
-    --config configs/pecj_benchmark.json \
-    --output results/
+cmake -B build -S . \
+  -DSAGE_TSDB_ENABLE_PECJ=ON \
+  -DPECJ_MODE=INTEGRATED \
+  -DPECJ_DIR=/path/to/PECJ
 ```
 
-### 实验配置模板
+启用后，`sage_tsdb_compute` 会加入 `pecj_compute_engine.cpp` 和 `window_scheduler.cpp`，并定义 `PECJ_MODE_INTEGRATED`。如果发现 PECJ 库且启用 `PECJ_FULL_INTEGRATION`，会进一步链接 PECJ 和 Torch。
 
-```json
-{
-  "experiment": {
-    "name": "PECJ Plugin vs Integrated Performance Comparison",
-    "runs": 5,
-    "warmup_runs": 2
-  },
-  "workload": {
-    "total_events": 10000000,
-    "window_size_ms": 1000,
-    "slide_size_ms": 500,
-    "out_of_order_ratio": 0.2,
-    "key_range": 1000
-  },
-  "modes": [
-    {
-      "name": "plugin",
-      "config": {
-        "threads": 4,
-        "buffer_size": 100000
-      }
-    },
-    {
-      "name": "integrated",
-      "config": {
-        "threads": 4,
-        "max_memory_mb": 2048
-      }
-    }
-  ],
-  "metrics": [
-    "throughput_events_per_sec",
-    "latency_p50_ms",
-    "latency_p99_ms",
-    "memory_peak_mb",
-    "memory_avg_mb",
-    "cpu_usage_percent"
-  ]
-}
+目标设计：
+
+- 从 `stream_s` / `stream_r` 查询窗口数据。
+- 转换为 PECJ tuple。
+- 调用 IAWJ、IMA、MSWJ、SHJ、PRJ 等 PECJ operator。
+- 返回 `ComputeStatus` 和 `ComputeMetrics`。
+- 通过 WindowScheduler 自动触发窗口计算。
+
+当前注意事项：
+
+- stub 模式可构建接口和部分测试。
+- full integration 依赖外部 PECJ/Torch 环境。
+- 详细 join payload 的结果写表路径在代码中仍需继续完善；不要把旧文档中的“完整结果写回已完成”视为当前事实。
+
+### WindowScheduler
+
+`WindowScheduler` 负责 PECJ integrated 场景下的窗口触发：
+
+- 窗口类型: Tumbling、Sliding、Session、IntraWindow、MultiStream。
+- 触发策略: TimeBased、CountBased、Hybrid、Watermark、Manual。
+- 支持 watermark、late data 标记、pending/active window 管理。
+- 通过 callback 上报完成或失败状态。
+
+目前它与 `PECJComputeEngine` 强绑定；后续若引入通用 compute scheduler，可以将 SRTFD 等引擎统一纳入调度。
+
+### ComputeStateManager
+
+`ComputeStateManager` 管理可序列化计算状态：
+
+- 状态表: `_compute_state`。
+- checkpoint 表: `_compute_checkpoint`。
+- 支持 save/load/has/delete/list/persist/checkpoint/restore。
+- `ComputeState` 包含 compute name、timestamp、watermark、window id、processed events、operator state 和 metadata。
+
+## 插件层
+
+插件层用于 baseline 模式、适配外部算法和事件驱动处理。核心接口：
+
+- `IAlgorithmPlugin`: initialize、resource-managed initialize、feedData、process、getStats、reset、start、stop、name/version。
+- `PluginRegistry`: 静态注册和按名称创建插件。
+- `PluginManager`: 生命周期、ResourceManager、EventBus、启停、feed、统计、启用/禁用。
+- `EventBus`: 数据、结果、错误和指标事件的发布订阅。
+
+`PluginManager::loadPlugin()` 当前通过配置中的 `mode` 字段显式选择：
+
+- `baseline`: 调用插件普通 `initialize(config)`。
+- `integrated`: 先从 ResourceManager 分配资源，再调用插件 `initialize(config, request, handle)`。
+
+若 mode 不是 `baseline|integrated`，或 integrated 初始化不支持，则失败。该行为符合 ADR 0001：不做静默 fallback。
+
+当前内置适配器：
+
+- `PECJAdapter`: baseline/plugin PECJ 适配器，支持异步 feed 和插件生命周期。
+- `FaultDetectionAdapter`: z-score/VAE/hybrid 风格故障检测适配器，VAE 路径当前以 stub 方式保留扩展点。
+
+## Python 层
+
+Python 包名为 `isage-tsdb`，源码包目录为 `sage_tsdb/`。
+
+当前 Python 层包括：
+
+- `_sage_tsdb` pybind11 extension，绑定 `TimeSeriesData`、`TimeRange`、`QueryConfig`、`TimeSeriesDB`、`TimeSeriesIndex`。
+- Python fallback core，在 C++ extension 不可用时提供同名核心类型。
+- Python-only `AggregationType`、`InterpolationType`。
+- Python 算法: `OutOfOrderStreamJoin`、`WindowAggregator`、`TimeSeriesAlgorithm`。
+- `SageTSDBService` 和配置封装。
+
+`pyproject.toml` 当前运行时依赖最小化为 `numpy>=1.26.0,<2.3.0`；开发依赖通过 optional `dev` 安装。
+
+## 典型数据流
+
+### 基础写入和查询
+
+```mermaid
+sequenceDiagram
+    participant App as Application
+    participant DB as TimeSeriesDB
+    participant Index as TimeSeriesIndex
+    participant Storage as StorageEngine
+
+    App->>DB: add(data) or insert(table, data)
+    DB->>Index: index.add(data)
+    App->>DB: query(range, tags)
+    DB->>Index: index.query(config)
+    Index-->>App: vector<TimeSeriesData>
+    App->>DB: save_to_disk(path) / create_checkpoint(id)
+    DB->>Storage: persist current data
 ```
 
-### 性能指标收集
+### 类型化流表和计算结果
 
-```cpp
-// ========== src/benchmark/performance_collector.h ==========
-struct PerformanceMetrics {
-    // 模式标识
-    std::string mode;  // "plugin" or "integrated"
-    
-    // 吞吐量指标
-    uint64_t total_events;
-    double duration_seconds;
-    double throughput_events_per_sec;
-    
-    // 延迟指标 (microseconds)
-    double latency_min;
-    double latency_max;
-    double latency_avg;
-    double latency_p50;
-    double latency_p95;
-    double latency_p99;
-    double latency_p999;
-    
-    // 资源指标
-    size_t memory_peak_bytes;
-    size_t memory_avg_bytes;
-    int threads_used;
-    double cpu_usage_percent;
-    
-    // PECJ 特定指标
-    uint64_t windows_completed;
-    uint64_t join_results_count;
-    double avg_window_latency_ms;
-    
-    // 模式差异
-    bool has_data_duplication;  // Plugin: true, Integrated: false
-    bool uses_internal_threads; // Plugin: true, Integrated: false
-};
-
-// 对比报告生成
-void generateComparisonReport(
-    const PerformanceMetrics& plugin_metrics,
-    const PerformanceMetrics& integrated_metrics) {
-    
-    std::cout << "=== PECJ Performance Comparison ===" << std::endl;
-    std::cout << "Throughput: " << std::endl;
-    std::cout << "  Plugin:     " << plugin_metrics.throughput_events_per_sec << " events/s" << std::endl;
-    std::cout << "  Integrated: " << integrated_metrics.throughput_events_per_sec << " events/s" << std::endl;
-    std::cout << "  Speedup:    " << (integrated_metrics.throughput_events_per_sec / plugin_metrics.throughput_events_per_sec) << "x" << std::endl;
-    
-    // ... 更多对比输出
-}
+```mermaid
+flowchart LR
+    Source[External streams] --> StreamS[StreamTable stream_s]
+    Source --> StreamR[StreamTable stream_r]
+    StreamS --> Engine[Compute engine]
+    StreamR --> Engine
+    Engine --> JoinResults[JoinResultTable join_results]
+    JoinResults --> Query[Downstream query / benchmark]
 ```
 
-### 可视化对比脚本
+### 插件 baseline 模式
 
-```python
-# scripts/compare_performance.py
-import json
-import matplotlib.pyplot as plt
-
-def plot_comparison(plugin_results, integrated_results):
-    metrics = ['throughput', 'latency_p99', 'memory_peak', 'cpu_usage']
-    
-    fig, axes = plt.subplots(2, 2, figsize=(15, 12))
-    
-    # 吞吐量对比
-    axes[0, 0].bar(['Plugin', 'Integrated'], 
-                   [plugin_results['throughput'], integrated_results['throughput']])
-    axes[0, 0].set_title('Throughput (events/sec)')
-    
-    # 延迟对比
-    axes[0, 1].bar(['Plugin', 'Integrated'],
-                   [plugin_results['latency_p99'], integrated_results['latency_p99']])
-    axes[0, 1].set_title('P99 Latency (ms)')
-    
-    # 内存对比
-    axes[1, 0].bar(['Plugin', 'Integrated'],
-                   [plugin_results['memory_peak'], integrated_results['memory_peak']])
-    axes[1, 0].set_title('Peak Memory (MB)')
-    
-    # CPU 对比
-    axes[1, 1].bar(['Plugin', 'Integrated'],
-                   [plugin_results['cpu_usage'], integrated_results['cpu_usage']])
-    axes[1, 1].set_title('CPU Usage (%)')
-    
-    plt.savefig('pecj_performance_comparison.png')
+```mermaid
+flowchart LR
+    Input[TimeSeriesData shared_ptr] --> PM[PluginManager]
+    PM --> Bus[EventBus]
+    PM --> Plugin[IAlgorithmPlugin]
+    Plugin --> Stats[Plugin stats/results]
+    PM --> RM[ResourceManager]
 ```
 
-## 未实现功能清单（Roadmap）
+## 测试与验证
 
-### 高优先级（P0 - 生产必需）
-1. **GPU 资源管理** ❌
-   - ResourceManager 中 `gpu_ids` 仅为接口预留
-   - 需要实现 CUDA 设备分配和调度
-   - 需要 GPU 内存配额管理
-   - **预计工作量**: 2-3 周
+当前 CMake 测试覆盖：
 
-2. **自动降级触发逻辑完善** ⚠️
-   - `fallbackToAQP()` 已实现，但触发条件不完整
-   - 需要基于超时、内存压力、错误率自动切换
-   - **预计工作量**: 1 周
+- core: `test_time_series_data`、`test_time_series_index`、`test_time_series_db`、`test_storage_engine`、`test_table_design`。
+- algorithms: `test_stream_join`、`test_window_aggregator`。
+- compute: `test_srtfd_compute_engine` 默认随 SRTFD 开关构建；PECJ compute/window tests 随 PECJ integrated 条件构建。
+- plugins: `test_pecj_plugin`、`test_fault_detection_plugin`、`test_resource_manager`、`test_integrated_mode` 随插件目标构建。
 
-3. **大规模性能验证** ⏳
-   - 百万级事件流测试
-   - 多窗口并发压力测试
-   - 长时间运行稳定性测试
-   - **预计工作量**: 2 周
-
-### 中优先级（P1 - 功能增强）
-4. **分布式计算支持** ❌
-   - 表分片 (sharding) 机制
-   - 跨节点任务调度
-   - 分布式状态一致性
-   - **预计工作量**: 4-6 周
-
-5. **Python 完整绑定** ⚠️
-   - PECJ 计算接口暴露
-   - WindowScheduler 配置接口
-   - 回调函数支持
-   - **预计工作量**: 1-2 周
-
-6. **热切换模式** ❌
-   - 运行时在插件模式和深度融合模式间切换
-   - 零停机迁移
-   - 状态平滑转移
-   - **预计工作量**: 3-4 周
-
-### 低优先级（P2 - 优化和扩展）
-7. **多计算引擎框架** ⚠️
-   - `IComputeEngine` 统一接口（部分设计）
-   - 计算引擎注册和发现机制
-   - 资源在多引擎间动态分配
-   - **预计工作量**: 2 周
-
-8. **高级监控和可视化** ⚠️
-   - Prometheus/Grafana 集成
-   - 实时指标仪表板
-   - 告警规则引擎
-   - **预计工作量**: 1-2 周
-
-9. **自适应参数调优** ❌
-   - 基于历史指标自动调整窗口大小
-   - 自动选择最优算子 (IAWJ vs PAWJ)
-   - 动态线程池大小
-   - **预计工作量**: 3-4 周
-
-## 后续扩展
-
-### 已规划的架构扩展
-
-1. **多计算引擎支持** ⚠️ 部分设计
-   - 实现统一的 `IComputeEngine` 接口
-   - 支持注册多个计算引擎（PECJ、Fault Detection、Anomaly Detection）
-   - **当前状态**: FaultDetectionAdapter 已实现，但缺乏统一抽象
-
-2. **分布式计算** ❌ 未实现
-   - 通过 sageTSDB 的分布式表（sharding）支持大规模计算
-   - PECJ 计算任务可调度到多节点
-   - **技术路线**: 基于 gRPC 的远程计算引擎调用
-
-3. **GPU 加速** ⚠️ 接口预留
-   - ResourceManager 自动分配 GPU 设备
-   - PECJ 计算在 GPU 上执行（需 PECJ 支持）
-   - **依赖**: PECJ 需先支持 GPU 算子
-
-4. **自动模式切换** ❌ 未实现
-   - 运行时根据负载动态切换模式
-   - 插件模式 ↔ 深度融合模式热切换
-   - **挑战**: 状态迁移和数据一致性保证
-
-## 常见问题 (FAQ)
-
-### Q1: 数据从外部到 PECJ 计算的完整流程？
-```
-1. 外部数据源 → TimeSeriesDB::insert("stream_s", data)
-2. sageTSDB 写入 MemTable，必要时 flush 到 LSM-Tree
-3. WindowScheduler 检测窗口完整 → 触发计算
-4. PECJComputeEngine::executeWindowJoin() 执行：
-   a. 从 stream_s/stream_r 表查询窗口数据
-   b. 调用 PECJ 核心算法
-   c. 将结果写入 join_results 表
-5. EventBus 发布 "window_completed" 事件
-6. 下游应用通过 query("join_results") 获取结果
-```
-
-### Q2: PECJ 的状态（如 watermark、窗口进度）如何管理？
-所有状态都序列化后存储在 sageTSDB 的特殊表 `_compute_state` 中：
-```cpp
-// 保存状态
-db.insert("_compute_state", {
-    .tags = {{"compute_name", "pecj_engine"}},
-    .fields = {{"watermark", current_watermark},
-               {"window_id", current_window_id}},
-    .payload = serialized_operator_state
-});
-
-// 恢复状态
-auto state_data = db.query("_compute_state", {
-    .filter_tags = {{"compute_name", "pecj_engine"}}
-});
-pecj_engine.restoreState(state_data[0].payload);
-```
-
-### Q3: 如何保证 PECJ 计算的实时性？
-1. **优先级调度**：高优先级窗口任务优先执行
-2. **增量计算**：每个窗口独立计算，不阻塞后续窗口
-3. **超时降级**：超过阈值自动切换到 AQP 模式（牺牲精度换速度）
-4. **预取优化**：WindowScheduler 提前将数据加载到 MemTable
-
-### Q4: 如何处理乱序数据（out-of-order）？
-sageTSDB 的表支持乱序插入：
-```cpp
-// 即使时间戳乱序，也能正确插入
-db.insert("stream_s", {.timestamp = t1, ...});
-db.insert("stream_s", {.timestamp = t0, ...});  // t0 < t1
-
-// PECJ 查询时会自动按时间排序
-auto data = db.query("stream_s", time_range);  // 已排序
-```
-
-### Q5: 如何在插件模式和深度融合模式之间切换？
-**双模式共存**，通过 CMake 参数选择：
+常用命令：
 
 ```bash
-# 使用插件模式（传统方式）
-cmake -DPECJ_MODE=PLUGIN ..
-
-# 使用深度融合模式
-cmake -DPECJ_MODE=INTEGRATED ..
+cmake -B build -S . -DBUILD_TESTS=ON
+cmake --build build -j$(nproc)
+ctest --test-dir build --output-on-failure
 ```
 
-**运行时行为差异**：
-- **插件模式**：使用 `feedData()` 异步输入，PECJ 内部管理缓冲区和线程
-- **深度融合模式**：数据先 `db->insert()`，通过 WindowScheduler 触发计算
+只验证 SRTFD compute：
 
-**代码兼容性**：
-```cpp
-#ifdef PECJ_MODE_PLUGIN
-    // 插件模式代码
-    pecj_adapter->feedStreamS(data);
-#elif defined(PECJ_MODE_INTEGRATED)
-    // 深度融合模式代码
-    db->insert("stream_s", data);
-#endif
-```
-
-### Q6: 如何调试 PECJ 计算问题？
-sageTSDB 提供完整的调试能力：
-```cpp
-// 1. 查询输入数据
-auto s_data = db.query("stream_s", window_time_range);
-auto r_data = db.query("stream_r", window_time_range);
-
-// 2. 手动触发计算（跳过 WindowScheduler）
-auto status = pecj_engine.executeWindowJoin(window_id, time_range);
-
-// 3. 检查中间状态
-auto state = db.query("_compute_state", {
-    .filter_tags = {{"compute_name", "pecj_engine"}}
-});
-
-// 4. 验证输出
-auto results = db.query("join_results", {
-    .filter_tags = {{"window_id", std::to_string(window_id)}}
-});
-```
-
-### Q7: 多个 PECJ 实例如何隔离？
-通过 ResourceManager 的资源配额隔离：
-```cpp
-// 为不同查询分配独立的计算引擎
-auto pecj_query1 = db.createComputeEngine("pecj_q1", {
-    .requested_threads = 2,
-    .max_memory_bytes = 1GB
-});
-
-auto pecj_query2 = db.createComputeEngine("pecj_q2", {
-    .requested_threads = 2,
-    .max_memory_bytes = 1GB
-});
-
-// 资源总和不超过系统配额
-```
-
-## 实现注意事项
-
-### 1. 线程安全
-- `PECJComputeEngine` 的所有公共方法必须线程安全
-- 多个窗口可能并发调用 `executeWindowJoin()`
-- 使用 `std::shared_mutex` 保护共享状态
-
-### 2. 内存管理
-```cpp
-class PECJComputeEngine {
-private:
-    // 使用 Arena 分配器减少碎片
-    std::unique_ptr<MemoryArena> arena_;
-    
-    // 定期检查内存使用
-    void checkMemoryUsage() {
-        if (arena_->usage() > config_.max_memory_bytes) {
-            // 触发清理或降级
-            cleanupOldWindows();
-        }
-    }
-};
-```
-
-### 3. 错误处理
-```cpp
-ComputeStatus PECJComputeEngine::executeWindowJoin(...) {
-    try {
-        // 查询数据
-        auto s_data = db_->query("stream_s", time_range);
-        auto r_data = db_->query("stream_r", time_range);
-        
-        // 执行计算
-        auto result = pecj_operator_->join(s_data, r_data);
-        
-        // 写回结果
-        db_->insert("join_results", result);
-        
-        return {.success = true, .join_count = result.size()};
-        
-    } catch (const std::exception& e) {
-        // 记录错误，不抛出异常
-        LOG_ERROR("PECJ computation failed: {}", e.what());
-        return {.success = false, .error = e.what()};
-    }
-}
-```
-
-### 4. 性能优化建议
-- **批量查询**：一次查询整个窗口，而非逐条查询
-- **零拷贝**：使用 `std::shared_ptr` 在 sageTSDB 和 PECJ 间共享数据
-- **异步写入**：计算结果异步写入表，不阻塞下一个窗口
-- **索引优化**：在时间戳字段建立索引加速窗口查询
-
-### 5. 监控指标
-必须上报的关键指标：
-```cpp
-struct PECJMetrics {
-    // 吞吐量
-    uint64_t windows_completed;
-    uint64_t tuples_processed;
-    
-    // 延迟
-    double avg_window_latency_ms;
-    double p99_window_latency_ms;
-    
-    // 资源
-    size_t peak_memory_bytes;
-    int active_threads;
-    
-    // 质量
-    double avg_join_selectivity;  // join_count / (|S| * |R|)
-    double aqp_error_rate;        // |exact - aqp| / exact
-    
-    // 错误
-    uint64_t failed_windows;
-    uint64_t retries;
-};
-```
-
-## 附录：代码索引
-
-### 核心模块文件列表
-
-#### Compute 层（深度融合模式）
-```
-include/sage_tsdb/compute/
-├── pecj_compute_engine.h       # PECJ 无状态计算引擎
-├── window_scheduler.h          # 窗口调度器
-└── compute_state_manager.h     # 状态管理器
-
-src/compute/
-├── pecj_compute_engine.cpp     # 实现 (301 行)
-├── window_scheduler.cpp        # 实现 (540+ 行)
-└── compute_state_manager.cpp   # 实现 (188 行)
-```
-
-#### Core 层（存储和表）
-```
-include/sage_tsdb/core/
-├── time_series_db.h            # 数据库主接口
-├── stream_table.h              # 输入流表
-├── join_result_table.h         # Join 结果表
-├── lsm_tree.h                  # LSM-Tree 持久化
-├── table_manager.h             # 多表管理
-├── resource_manager.h          # 资源统一管理 (重构后)
-└── time_series_index.h         # 索引系统
-
-src/core/
-├── time_series_db.cpp
-├── stream_table.cpp            # MemTable + LSM 实现
-├── join_result_table.cpp       # 259 行
-├── lsm_tree.cpp                # 完整 LSM-Tree
-├── table_manager.cpp
-├── resource_manager.cpp        # 资源管理实现 (重构后)
-└── time_series_index.cpp
-```
-
-#### Plugins 层（插件模式）
-```
-include/sage_tsdb/plugins/
-├── plugin_manager.h            # 插件生命周期管理
-├── event_bus.h                 # 事件通知系统
-└── adapters/
-    ├── pecj_adapter.h          # PECJ 插件模式适配器
-    └── fault_detection_adapter.h
-
-src/plugins/
-├── plugin_manager.cpp
-└── adapters/
-    ├── pecj_adapter.cpp        # 257 行
-    └── fault_detection_adapter.cpp
-
-注: ResourceManager 已从 plugins/ 迁移到 core/ (2024-12-14)
-```
-
-#### Examples（使用示例）
-```
-examples/
-├── deep_integration_demo.cpp       # 深度融合模式完整示例
-├── window_scheduler_demo.cpp       # WindowScheduler 使用示例
-├── plugin_usage_example.cpp        # 插件模式示例
-├── performance_benchmark.cpp       # 性能测试框架
-├── persistence_example.cpp         # 持久化示例
-└── table_design_demo.cpp           # 多表使用示例
-```
-
-#### Tests（测试）
-```
-tests/
-├── test_pecj_plugin.cpp            # PECJ 插件测试
-├── test_integrated_mode.cpp        # 深度融合模式集成测试
-├── test_window_scheduler.cpp       # WindowScheduler 单元测试
-├── test_resource_manager.cpp       # ResourceManager 测试
-├── test_table_design.cpp           # 表设计测试
-└── test_storage_engine.cpp         # 存储引擎测试
-```
-
-### 编译和运行
-
-#### 构建深度融合模式
 ```bash
-mkdir -p build_integrated && cd build_integrated
-cmake .. \
-    -DSAGE_TSDB_ENABLE_PECJ=ON \
-    -DPECJ_MODE=INTEGRATED \
-    -DPECJ_FULL_INTEGRATION=ON \
-    -DPECJ_DIR=/path/to/PECJ \
-    -DCMAKE_BUILD_TYPE=Release
-make -j8
+cmake -B build -S . -DBUILD_TESTS=ON -DSAGE_TSDB_ENABLE_SRTFD=ON
+cmake --build build --target test_srtfd_compute_engine -j$(nproc)
+./build/tests/test_srtfd_compute_engine
 ```
 
-#### 运行示例
+PECJ integrated 验证需要外部 PECJ 目录和可用依赖：
+
 ```bash
-# 深度融合模式 Demo
-./build_integrated/examples/deep_integration_demo
-
-# 窗口调度器 Demo
-./build_integrated/examples/window_scheduler_demo
-
-# 性能基准测试
-./build_integrated/examples/performance_benchmark
+cmake -B build -S . \
+  -DBUILD_TESTS=ON \
+  -DSAGE_TSDB_ENABLE_PECJ=ON \
+  -DPECJ_MODE=INTEGRATED \
+  -DPECJ_DIR=/path/to/PECJ
+cmake --build build --target test_pecj_compute_engine -j$(nproc)
 ```
 
-#### 运行测试
-```bash
-cd build_integrated
-ctest --output-on-failure
-# 或单独运行
-./tests/test_integrated_mode
-./tests/test_window_scheduler
+## 已知限制
+
+1. **PECJ 结果写回仍需收口**
+   当前 PECJ compute 的核心状态和指标路径可用，但详细 join result payload 写入 result table 的实现仍需要按当前 API 重新整理。
+
+2. **通用 compute scheduler 尚未抽象**
+   WindowScheduler 当前面向 PECJ；SRTFD 使用手动窗口执行接口。未来可以抽象 `IComputeEngine` 与统一 scheduler。
+
+3. **GPU 资源管理仅预留接口**
+   `ResourceRequest::gpu_ids` 存在，但没有完整设备分配和 GPU 内存配额实现。
+
+4. **Python 绑定未覆盖全部 C++ 能力**
+   当前 pybind11 主要绑定 core 类型和默认 DB API；compute、plugins、typed tables 尚未完整暴露。
+
+5. **安装导出目标偏核心库**
+   当前 install/package 重点覆盖 core、algorithms 和 Python extension；compute/plugins 的安装导出策略需要后续明确。
+
+6. **部分文档仍是历史 PECJ 语境**
+   模块文档中可能保留性能数字或状态描述，应以当前代码和本设计文档为准。
+
+## Roadmap
+
+### P0: 当前架构收口
+
+- 完成 PECJ result table 写回路径与测试。
+- 统一 `TimeSeriesDB` 轻量多表 API 与 `TableManager` 类型化表 API 的定位说明和示例。
+- 修正文档索引中仍指向旧路径或旧状态的描述。
+- 明确 compute/plugins 的 install/export 策略。
+
+### P1: Compute 统一化
+
+- 引入通用 `IComputeEngine` 或等价概念，统一 PECJ、SRTFD 和后续异常检测引擎的生命周期。
+- 将 WindowScheduler 从 PECJ 专用调度器演进为可配置 compute scheduler。
+- 将 ComputeStateManager 接入更多 compute engine 的恢复路径。
+
+### P2: 模型与 Python 能力
+
+- 为 SRTFD 接入 TorchScript 或外部推理 backend，并保持模型 artifact immutable。
+- 扩展 Python 绑定，覆盖命名表、compute engine 配置和结果查询。
+- 增加 Python 层 benchmark 和服务化示例。
+
+### P3: 资源与规模化
+
+- 实现 GPU 资源分配和设备内存配额。
+- 增加长时间压力测试、大规模乱序数据测试和 benchmark 可视化基线。
+- 规划分布式表或远程 compute engine 调度。
+
+## 代码索引
+
+```text
+include/sage_tsdb/
+  core/
+    time_series_data.h
+    time_series_index.h
+    time_series_db.h
+    storage_engine.h
+    lsm_tree.h
+    stream_table.h
+    join_result_table.h
+    table_manager.h
+    resource_manager.h
+  algorithms/
+    algorithm_base.h
+    stream_join.h
+    window_aggregator.h
+  compute/
+    srtfd_compute_engine.h
+    pecj_compute_engine.h
+    window_scheduler.h
+    compute_state_manager.h
+  plugins/
+    plugin_interface.h
+    plugin_registry.h
+    plugin_manager.h
+    event_bus.h
+    adapters/pecj_adapter.h
+    adapters/fault_detection_adapter.h
+
+src/ implementation mirrors include/ by module.
+
+sage_tsdb/
+  bindings.cpp
+  __init__.py
+  core.py
+  algorithms/
+  service/
+
+docs/
+  README.md
+  adr/0001-boundary-and-mode-policy.md
+  core/
+  compute/
+  plugins/
+  algorithms/
+  examples/
 ```
 
----
+## 相关文档
 
-## 文档元数据
+- `docs/adr/0001-boundary-and-mode-policy.md`: 仓库职责、模式边界和禁止模式。
+- `docs/core/README.md`: core 模块总览。
+- `docs/core/LSM_TREE_IMPLEMENTATION.md`: LSM-Tree 实现。
+- `docs/core/PERSISTENCE.md`: 持久化和 checkpoint。
+- `docs/core/TABLE_DESIGN_IMPLEMENTATION.md`: StreamTable、JoinResultTable、TableManager。
+- `docs/core/RESOURCE_MANAGER_GUIDE.md`: ResourceManager 使用与调优。
+- `docs/compute/SRTFD_STATELESS_OPERATOR_DESIGN.md`: SRTFD 无状态算子设计。
+- `docs/compute/PECJ_COMPUTE_ENGINE_IMPLEMENTATION.md`: PECJ compute engine 历史实现说明。
+- `docs/compute/PECJ_OPERATORS_INTEGRATION.md`: PECJ 算子列表。
+- `docs/plugins/README.md`: 插件系统总览。
+- `docs/algorithms/README.md`: 内置算法总览。
 
-**文档版本**: v3.1 (实现状态标注版)  
-**最后更新**: 2024-12-09  
-**代码分支**: `pecj_resource_integration`  
-**实现进度**: ~85% 核心功能完成  
-**审阅者**: PECJ 团队 + sageTSDB 团队  
-**维护者**: @intellistream  
+## 维护规则
 
-**变更历史**:
-- v3.2 (2024-12-14): ResourceManager 重构 - 从 plugins/ 迁移到 core/，命名空间从 plugins 改为 core
-- v3.1 (2024-12-09): 添加实现状态标注、代码索引、架构图
-- v3.0 (2024-12-04): 初始深度融合架构设计
-- v2.0 (已废弃): 传统插件模式设计
-
-**相关文档**:
-- `PECJ_INTEGRATION_FIX.md`: PECJ 集成问题修复记录
-- `PYTORCH_INTEGRATION_SUCCESS.md`: PyTorch/Torch 集成成功记录
-- `REFACTORING_SUMMARY.md`: 重构总结
-- `TABLE_DESIGN_IMPLEMENTATION.md`: 表设计实现细节
-- `docs/PECJ_DEEP_INTEGRATION_SUMMARY.md`: 深度融合总结
-
-**已知问题**:
-1. GPU 资源管理仅为接口预留，实际分配未实现
-2. 分布式计算尚未支持
-3. Python 绑定不完整
-4. 性能测试数据待补充
-
-**下一步计划**:
-- [ ] 完成大规模性能验证（百万级事件）
-- [ ] 实现 GPU 资源管理
-- [ ] 完善自动降级逻辑
-- [ ] 补充 Python 完整绑定
-
----
-
-## 附录 B: ResourceManager 重构说明 (2024-12-14)
-
-### 重构动机
-
-ResourceManager 最初被放置在 `plugins/` 目录下，但实际上它是一个**跨模式的核心基础设施**，服务于：
-1. **插件模式** (Plugin Mode): 为 PECJAdapter、FaultDetectionAdapter 等插件分配资源
-2. **融合模式** (Integrated Mode): 为 PECJComputeEngine 等计算引擎分配资源
-3. **核心系统**: TimeSeriesDB 直接持有和使用 ResourceManager
-
-因此，将其放在 `plugins/` 目录下是不恰当的，类似于将操作系统的资源调度器放在"应用程序"目录下。
-
-### 重构内容
-
-#### 1. 目录结构变更
-
-**之前**:
-```
-src/plugins/
-├── resource_manager.cpp
-include/sage_tsdb/plugins/
-├── resource_manager.h
-```
-
-**之后**:
-```
-src/core/
-├── resource_manager.cpp        # 新位置
-include/sage_tsdb/core/
-├── resource_manager.h          # 新位置
-```
-
-#### 2. 命名空间变更
-
-**之前**:
-```cpp
-namespace sage_tsdb {
-namespace plugins {
-    class ResourceManager { ... }
-}
-}
-
-using namespace sage_tsdb::plugins;
-```
-
-**之后**:
-```cpp
-namespace sage_tsdb {
-namespace core {
-    class ResourceManager { ... }
-}
-}
-
-using namespace sage_tsdb::core;
-```
-
-#### 3. 引用更新
-
-所有引用 ResourceManager 的文件已更新：
-
-| 文件 | 变更内容 |
-|------|---------|
-| `src/core/time_series_db.cpp` | `#include "sage_tsdb/core/resource_manager.h"` |
-| `src/compute/pecj_compute_engine.cpp` | `#include "sage_tsdb/core/resource_manager.h"` |
-| `src/compute/window_scheduler.cpp` | `#include "sage_tsdb/core/resource_manager.h"` |
-| `examples/window_scheduler_demo.cpp` | `using namespace sage_tsdb::core;` |
-| `tests/test_resource_manager.cpp` | `using namespace sage_tsdb::core;` |
-| `tests/test_window_scheduler.cpp` | `using namespace sage_tsdb::core;` |
-
-#### 4. CMakeLists.txt 变更
-
-```cmake
-# 之前: resource_manager.cpp 在 sage_tsdb_plugins 库中
-add_library(sage_tsdb_plugins
-    src/plugins/plugin_manager.cpp
-    src/plugins/resource_manager.cpp        # ❌ 错误位置
-    src/plugins/adapters/pecj_adapter.cpp
-)
-
-# 之后: resource_manager.cpp 在 sage_tsdb_core 库中
-add_library(sage_tsdb_core
-    src/core/time_series_data.cpp
-    src/core/resource_manager.cpp          # ✅ 正确位置
-    # ... 其他核心文件
-)
-```
-
-### 设计原则
-
-重构后的 ResourceManager 符合以下设计原则：
-
-1. **单一职责**: 专注于系统资源管理，不依赖特定模式
-2. **高内聚**: 与 TimeSeriesDB、TableManager 等核心组件紧密协作
-3. **低耦合**: 插件和计算引擎都通过统一接口使用 ResourceManager
-4. **可扩展**: 预留 GPU 资源管理、分布式调度等扩展点
-
-### 架构图更新
-
-```
-┌─────────────────────────────────────────────────────┐
-│                 sageTSDB Core Layer                  │
-├─────────────────────────────────────────────────────┤
-│                                                       │
-│  ┌──────────────┐    ┌──────────────────┐          │
-│  │TimeSeriesDB  │───→│ ResourceManager  │ ✅ Core  │
-│  └──────────────┘    └──────────┬───────┘          │
-│                                  │                   │
-│  ┌──────────────┐    ┌──────────▼───────┐          │
-│  │ TableManager │    │  Thread Pool     │          │
-│  └──────────────┘    │  Memory Quota    │          │
-│                       │  GPU Allocation  │          │
-│                       └──────────────────┘          │
-└─────────────────────────────────────────────────────┘
-           │                          │
-           ▼                          ▼
-┌──────────────────┐      ┌──────────────────┐
-│  Plugin Mode     │      │ Integrated Mode  │
-│  (PECJAdapter)   │      │ (ComputeEngine)  │
-└──────────────────┘      └──────────────────┘
-```
-
-### 兼容性说明
-
-**API 完全兼容**: 所有公共接口保持不变，仅更改了模块组织结构。
-
-**迁移指南**:
-如果你的代码引用了旧的命名空间或路径，请按以下方式更新：
-
-```cpp
-// 旧代码 (需要更新)
-#include "sage_tsdb/plugins/resource_manager.h"
-using namespace sage_tsdb::plugins;
-
-// 新代码
-#include "sage_tsdb/core/resource_manager.h"
-using namespace sage_tsdb::core;
-```
-
-**向后兼容**: 为了平滑过渡，旧的头文件路径暂时保留作为转发声明（计划在 v4.0 移除）。
-
-### 验证
-
-重构后已通过以下验证：
-- ✅ 编译通过 (无警告)
-- ⏳ 单元测试通过 (待运行)
-- ⏳ 集成测试通过 (待运行)
-- ⏳ 性能测试无回归 (待运行)
-
-### 相关 Issue
-
-- #42: ResourceManager 应该是核心组件而非插件
-- #56: 重构模块组织结构以反映实际依赖关系
-
+- 修改核心架构、构建开关、公共 API 或模式边界时，需要同步更新本文档。
+- 若文档与代码冲突，以当前代码和测试为准，并优先修正文档。
+- 不新增静默 fallback、shim/re-export 或跨仓库依赖来掩盖迁移问题。
+- 任何新增 compute/plugin 都应说明数据入口、结果出口、资源管理方式和测试目标。

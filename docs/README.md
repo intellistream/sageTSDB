@@ -11,9 +11,9 @@
 
 **[DESIGN_DOC_SAGETSDB_PECJ.md](./DESIGN_DOC_SAGETSDB_PECJ.md)**
 
-- sageTSDB 与 PECJ 集成的详细设计文档
-- 总体架构、双模式设计、运行机制
-- 数据流和计算引擎设计
+- sageTSDB 当前代码库的总体设计文档
+- core、algorithms、compute、plugins、Python 绑定和构建目标
+- 数据流、资源管理、模式边界和后续 roadmap
 - **推荐首先阅读此文档以了解整体架构**
 
 ## 📂 模块文档
@@ -56,6 +56,10 @@
   - 融合模式 vs 插件模式性能对比
   - 基准测试指南
 
+- **[compute/SRTFD_STATELESS_OPERATOR_DESIGN.md](./compute/SRTFD_STATELESS_OPERATOR_DESIGN.md)**
+  - SRTFD 无状态算子接入设计
+  - 与 compute 层和表 API 的集成关系
+
 ### 🔌 插件系统 (plugins/)
 
 **[plugins/README.md](./plugins/README.md)** - 插件系统总览
@@ -91,7 +95,7 @@
 ### 性能优化
 1. [compute/PECJ_BENCHMARK_README.md](./compute/PECJ_BENCHMARK_README.md) - 性能对比
 2. [core/RESOURCE_MANAGER_GUIDE.md](./core/RESOURCE_MANAGER_GUIDE.md) - 资源调优
-3. [compute/PECJ_COMPUTE_ENGINE_IMPLEMENTATION.md](./compute/PECJ_COMPUTE_ENGINE_IMPLEMENTATION.md) - 计算优化
+3. [compute/PECJ_COMPUTE_ENGINE_IMPLEMENTATION.md](./compute/PECJ_COMPUTE_ENGINE_IMPLEMENTATION.md) - PECJ 计算优化
 
 ## 📝 文档组织原则
 
@@ -106,13 +110,11 @@
 - **单元测试**：`../tests/` - 完整的测试用例
 - **构建脚本**：`../scripts/` - 编译和测试脚本
 - **主 README**：`../README.md` - 项目总览
-2. `RESOURCE_MANAGER_GUIDE.md` - 管理资源分配
-3. `LSM_TREE_IMPLEMENTATION.md` - 优化存储性能
 
 ### 故障排除
 - 性能问题 → `RESOURCE_MANAGER_GUIDE.md`
 - 存储问题 → `LSM_TREE_IMPLEMENTATION.md` + `PERSISTENCE.md`
-- 集成问题 → `DESIGN_DOC_SAGETSDB_PECJ.md`
+- 集成问题 → `DESIGN_DOC_SAGETSDB_PECJ.md` + `adr/0001-boundary-and-mode-policy.md`
 
 ## 其他资源
 
