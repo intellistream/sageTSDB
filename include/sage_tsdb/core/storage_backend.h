@@ -249,11 +249,13 @@ public:
     /**
      * @brief Access the process-wide registry instance.
      * @return Reference to the singleton registry.
+     * @note Defined out-of-line in src/core/storage_backend.cpp (NOT inline) so
+     *       there is exactly one registry instance across the shared library and
+     *       any executable/plugin that links it. An inline definition would give
+     *       each module its own static local, so registrations made inside the
+     *       core library would be invisible to a caller in another module.
      */
-    static StorageBackendRegistry& instance() {
-        static StorageBackendRegistry reg;
-        return reg;
-    }
+    static StorageBackendRegistry& instance();
 
     /**
      * @brief Register a backend creator under a name.

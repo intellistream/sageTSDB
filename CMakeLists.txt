@@ -55,6 +55,7 @@ add_library(sage_tsdb_core
     src/core/stream_table.cpp
     src/core/join_result_table.cpp
     src/core/table_manager.cpp
+    src/core/storage_backend.cpp
     src/core/backends/memory_backend.cpp
     src/utils/config.cpp
 )
@@ -171,6 +172,36 @@ target_include_directories(sage_tsdb_core
     PRIVATE
         ${PROJECT_SOURCE_DIR}/src
 )
+
+# ---------------------------------------------------------------------------
+# Dameng (达梦) storage backend adapter (skeleton; deliverable D3)
+#
+# OFF by default: the skeleton compiles with NO Dameng driver dependency, and
+# when disabled the "dameng" backend is simply not registered (selecting it via
+# StorageBackendConfig then throws "unknown backend" -- no silent fallback).
+#
+# When the DM-owning side wires the real driver, enable this option and fill in
+# the include/link block below (keeping ABI _GLIBCXX_USE_CXX11_ABI=0).
+# ---------------------------------------------------------------------------
+option(SAGE_TSDB_ENABLE_DM "Enable Dameng (达梦) storage backend adapter" OFF)
+if(SAGE_TSDB_ENABLE_DM)
+    target_sources(sage_tsdb_core PRIVATE src/core/backends/dameng_backend.cpp)
+    target_compile_definitions(sage_tsdb_core PUBLIC SAGE_TSDB_ENABLE_DM=1)
+    message(STATUS "Dameng storage backend: ENABLED (skeleton; driver TODO)")
+
+    # TODO(DM): locate and link the real Dameng driver here. Example outline:
+    #   find_path(DM_INCLUDE_DIR NAMES DPI.h HINTS $ENV{DM_HOME}/include)
+    #   find_library(DM_LIBRARY NAMES dmdpi dodbc HINTS $ENV{DM_HOME}/bin $ENV{DM_HOME}/lib)
+    #   if(DM_INCLUDE_DIR AND DM_LIBRARY)
+    #     target_include_directories(sage_tsdb_core PRIVATE ${DM_INCLUDE_DIR})
+    #     target_link_libraries(sage_tsdb_core PUBLIC ${DM_LIBRARY})
+    #     target_compile_definitions(sage_tsdb_core PUBLIC SAGE_TSDB_DM_DRIVER_AVAILABLE=1)
+    #   else()
+    #     message(FATAL_ERROR "SAGE_TSDB_ENABLE_DM=ON but Dameng driver not found")
+    #   endif()
+else()
+    message(STATUS "Dameng storage backend: disabled (default)")
+endif()
 
 # Algorithms library
 add_library(sage_tsdb_algorithms
