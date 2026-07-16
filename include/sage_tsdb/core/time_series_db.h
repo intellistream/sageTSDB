@@ -1,7 +1,7 @@
 #pragma once
 
 #include "time_series_data.h"
-#include "time_series_index.h"
+#include "storage_backend.h"
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -28,7 +28,26 @@ class ResourceManager;
  */
 class TimeSeriesDB {
 public:
+    /**
+     * @brief Construct with the default in-memory storage backend.
+     *
+     * Behaviorally identical to the historical implementation: all data lives
+     * in an in-memory index via core::MemoryBackend.
+     */
     TimeSeriesDB();
+
+    /**
+     * @brief Construct with an explicitly selected storage backend.
+     * @param backend_config Backend selection + parameters (e.g. "memory",
+     *        "dameng"). Resolved through core::StorageBackendRegistry.
+     * @throws std::runtime_error if the requested backend is not registered
+     *         (no silent fallback; see ADR 0001).
+     *
+     * Lets PECJ/SRTFD run on an enterprise database by pointing the same DB
+     * read/write API at a different backend, without any compute-engine change.
+     */
+    explicit TimeSeriesDB(const core::StorageBackendConfig& backend_config);
+
     ~TimeSeriesDB();
     
     // ========== Multi-Table Management API ==========
@@ -305,31 +324,26 @@ public:
     void setResourceManager(std::shared_ptr<ResourceManager> resource_manager);
 
 private:
-    // Core index (default table)
-    std::unique_ptr<TimeSeriesIndex> index_;
-    
-    // Multi-table storage: table_name -> index
-    std::unordered_map<std::string, std::unique_ptr<TimeSeriesIndex>> tables_;
-    
-    // Table type metadata: table_name -> type
-    std::unordered_map<std::string, TableType> table_types_;
-    
+    // Pluggable storage backend. Serves both the default-table API and the
+    // named-table API. Default construction uses core::MemoryBackend; the
+    // config constructor selects a backend via the registry.
+    std::unique_ptr<core::IStorageBackend> backend_;
+
     // Registered algorithms
     std::unordered_map<std::string, std::shared_ptr<TimeSeriesAlgorithm>> algorithms_;
-    
+
     // Statistics
     mutable int64_t query_count_;
     mutable int64_t write_count_;
-    
+
     // Storage engine (forward declared, initialized in constructor)
     std::unique_ptr<class StorageEngine> storage_engine_;
-    
+
     // Resource manager (shared)
     std::shared_ptr<ResourceManager> resource_manager_;
-    
-    // Helper: Get or create table index
-    TimeSeriesIndex* getTableIndex(const std::string& table_name);
-    const TimeSeriesIndex* getTableIndex(const std::string& table_name) const;
+
+    // Ensure the reserved default table exists in the backend.
+    void ensureDefaultTable();
 };
 
 } // namespace sage_tsdb

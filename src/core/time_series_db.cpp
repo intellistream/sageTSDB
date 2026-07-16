@@ -1,92 +1,96 @@
 #include "sage_tsdb/core/time_series_db.h"
 #include "sage_tsdb/core/storage_engine.h"
+#include "sage_tsdb/core/backends/memory_backend.h"
 #include "sage_tsdb/algorithms/algorithm_base.h"
 #include "sage_tsdb/core/resource_manager.h"
+#include <limits>
 #include <stdexcept>
 
 namespace sage_tsdb {
 
+namespace {
+// Reserved table name for the backward-compatible "default table" API
+// (add/query/size/clear/...). Named tables created via createTable() are kept
+// separate from this, and listTables()/hasTable() hide this reserved name so
+// the default-table and named-table APIs behave exactly as before.
+constexpr const char* kDefaultTable = "__sagetsdb_default__";
+}  // namespace
+
 TimeSeriesDB::TimeSeriesDB()
-    : index_(std::make_unique<TimeSeriesIndex>()),
+    : backend_(std::make_unique<core::MemoryBackend>()),
       query_count_(0),
       write_count_(0),
       storage_engine_(std::make_unique<StorageEngine>()),
-      resource_manager_(nullptr) {}
+      resource_manager_(nullptr) {
+    ensureDefaultTable();
+}
+
+TimeSeriesDB::TimeSeriesDB(const core::StorageBackendConfig& backend_config)
+    : backend_(core::StorageBackendRegistry::instance().create(backend_config)),
+      query_count_(0),
+      write_count_(0),
+      storage_engine_(std::make_unique<StorageEngine>()),
+      resource_manager_(nullptr) {
+    ensureDefaultTable();
+}
 
 TimeSeriesDB::~TimeSeriesDB() = default;
+
+void TimeSeriesDB::ensureDefaultTable() {
+    if (!backend_->hasTable(kDefaultTable)) {
+        backend_->createTable(kDefaultTable, TableType::TimeSeries);
+    }
+}
 
 // ========== Multi-Table Management Implementation ==========
 
 bool TimeSeriesDB::createTable(const std::string& name, TableType type) {
-    // Check if table already exists
-    if (tables_.find(name) != tables_.end()) {
+    // Guard the reserved default-table name so the two APIs stay separate.
+    if (name == kDefaultTable) {
         return false;
     }
-    
-    // Create new index for this table
-    tables_[name] = std::make_unique<TimeSeriesIndex>();
-    table_types_[name] = type;
-    
-    return true;
+    return backend_->createTable(name, type);
 }
 
 bool TimeSeriesDB::dropTable(const std::string& name) {
-    auto it = tables_.find(name);
-    if (it == tables_.end()) {
+    if (name == kDefaultTable) {
         return false;
     }
-    
-    tables_.erase(it);
-    table_types_.erase(name);
-    
-    return true;
+    return backend_->dropTable(name);
 }
 
 bool TimeSeriesDB::hasTable(const std::string& name) const {
-    return tables_.find(name) != tables_.end();
+    if (name == kDefaultTable) {
+        return false;  // hide the reserved default table
+    }
+    return backend_->hasTable(name);
 }
 
 std::vector<std::string> TimeSeriesDB::listTables() const {
     std::vector<std::string> names;
-    names.reserve(tables_.size());
-    
-    for (const auto& [name, _] : tables_) {
-        names.push_back(name);
+    for (const auto& name : backend_->listTables()) {
+        if (name != kDefaultTable) {  // hide the reserved default table
+            names.push_back(name);
+        }
     }
-    
     return names;
 }
 
 size_t TimeSeriesDB::insert(const std::string& table_name, const TimeSeriesData& data) {
-    auto* table_index = getTableIndex(table_name);
-    if (!table_index) {
-        throw std::runtime_error("Table not found: " + table_name);
-    }
-    
     ++write_count_;
-    return table_index->add(data);
+    return backend_->insert(table_name, data);
 }
 
 std::vector<size_t> TimeSeriesDB::insertBatch(const std::string& table_name,
                                                 const std::vector<TimeSeriesData>& data_list) {
-    auto* table_index = getTableIndex(table_name);
-    if (!table_index) {
-        throw std::runtime_error("Table not found: " + table_name);
-    }
-    
     write_count_ += data_list.size();
-    return table_index->add_batch(data_list);
+    return backend_->insertBatch(table_name, data_list);
 }
 
 std::vector<TimeSeriesData> TimeSeriesDB::query(const std::string& table_name,
                                                   const QueryConfig& config) const {
-    const auto* table_index = getTableIndex(table_name);
-    if (!table_index) {
-        throw std::runtime_error("Table not found: " + table_name);
-    }
-    
     ++query_count_;
-    return table_index->query(config);
+    return backend_->query(table_name, config);
 }
 
 std::vector<TimeSeriesData> TimeSeriesDB::query(const std::string& table_name,
@@ -95,22 +99,6 @@ std::vector<TimeSeriesData> TimeSeriesDB::query(const std::string& table_name,
     QueryConfig config(time_range, filter_tags);
     config.limit = 0;  // No limit when querying by TimeRange
     return query(table_name, config);
-}
-
-TimeSeriesIndex* TimeSeriesDB::getTableIndex(const std::string& table_name) {
-    auto it = tables_.find(table_name);
-    if (it != tables_.end()) {
-        return it->second.get();
-    }
-    return nullptr;
-}
-
-const TimeSeriesIndex* TimeSeriesDB::getTableIndex(const std::string& table_name) const {
-    auto it = tables_.find(table_name);
-    if (it != tables_.end()) {
-        return it->second.get();
-    }
-    return nullptr;
 }
 
 // ========== Resource Management Implementation ==========
@@ -127,7 +115,7 @@ void TimeSeriesDB::setResourceManager(std::shared_ptr<ResourceManager> resource_
 
 size_t TimeSeriesDB::add(const TimeSeriesData& data) {
     ++write_count_;
-    return index_->add(data);
+    return backend_->insert(kDefaultTable, data);
 }
 
 size_t TimeSeriesDB::add(int64_t timestamp, double value,
@@ -147,13 +135,13 @@ size_t TimeSeriesDB::add(int64_t timestamp, const std::vector<double>& value,
 std::vector<size_t> TimeSeriesDB::add_batch(
     const std::vector<TimeSeriesData>& data_list) {
     write_count_ += data_list.size();
-    return index_->add_batch(data_list);
+    return backend_->insertBatch(kDefaultTable, data_list);
 }
 
 std::vector<TimeSeriesData> TimeSeriesDB::query(
     const QueryConfig& config) const {
     ++query_count_;
-    return index_->query(config);
+    return backend_->query(kDefaultTable, config);
 }
 
 std::vector<TimeSeriesData> TimeSeriesDB::query(
@@ -191,15 +179,15 @@ std::vector<std::string> TimeSeriesDB::list_algorithms() const {
 }
 
 size_t TimeSeriesDB::size() const {
-    return index_->size();
+    return backend_->size(kDefaultTable);
 }
 
 bool TimeSeriesDB::empty() const {
-    return index_->empty();
+    return backend_->size(kDefaultTable) == 0;
 }
 
 void TimeSeriesDB::clear() {
-    index_->clear();
+    backend_->clear(kDefaultTable);
     query_count_ = 0;
     write_count_ = 0;
 }
@@ -220,11 +208,13 @@ bool TimeSeriesDB::save_to_disk(const std::string& file_path) {
         return false;
     }
     
-    // Get all data from index
+    // Get all data from the default table.
+    // NOTE: QueryConfig's default limit (1000) is preserved deliberately to keep
+    // save/checkpoint behavior identical to the pre-backend implementation.
     TimeRange full_range(0, std::numeric_limits<int64_t>::max());
     QueryConfig config(full_range);
-    std::vector<TimeSeriesData> all_data = index_->query(config);
-    
+    std::vector<TimeSeriesData> all_data = backend_->query(kDefaultTable, config);
+
     return storage_engine_->save(all_data, file_path);
 }
 
@@ -251,11 +241,13 @@ bool TimeSeriesDB::create_checkpoint(uint64_t checkpoint_id) {
         return false;
     }
     
-    // Get all data from index
+    // Get all data from the default table.
+    // NOTE: QueryConfig's default limit (1000) is preserved deliberately to keep
+    // save/checkpoint behavior identical to the pre-backend implementation.
     TimeRange full_range(0, std::numeric_limits<int64_t>::max());
     QueryConfig config(full_range);
-    std::vector<TimeSeriesData> all_data = index_->query(config);
-    
+    std::vector<TimeSeriesData> all_data = backend_->query(kDefaultTable, config);
+
     return storage_engine_->create_checkpoint(all_data, checkpoint_id);
 }
 
