@@ -99,6 +99,22 @@ target_link_libraries(test_table_design
     test_utils
 )
 
+# Storage backend contract tests (backend-agnostic consistency + stsb1 codec)
+add_executable(test_storage_backend_contract
+  test_storage_backend_contract.cpp
+)
+target_link_libraries(test_storage_backend_contract
+  PRIVATE
+    sage_tsdb_core
+    GTest::gtest_main
+    test_utils
+)
+# When the Dameng backend is enabled, include its differential case (pending
+# until the driver is wired -- the test SKIPs on NotImplemented).
+if(SAGE_TSDB_ENABLE_DM)
+    target_compile_definitions(test_storage_backend_contract PRIVATE SAGE_TSDB_ENABLE_DM=1)
+endif()
+
 # PECJ operators tests (basic tests without PECJ integration)
 add_executable(test_pecj_operators
   test_pecj_operators.cpp
@@ -218,6 +234,7 @@ gtest_discover_tests(test_stream_join)
 gtest_discover_tests(test_window_aggregator)
 gtest_discover_tests(test_storage_engine)
 gtest_discover_tests(test_table_design)
+gtest_discover_tests(test_storage_backend_contract)
 gtest_discover_tests(test_pecj_operators)
 
 if(TARGET test_window_scheduler)

@@ -249,17 +249,18 @@ SRTFD 默认 `input_dim = 52`，每条样本是 52 维向量。`value` 是 `std:
 - [ ] 未启用/未填充时 fail-fast，明确报错，**绝不回退内存**（ADR 0001）。
 - [ ] **验收**：`-DSAGE_TSDB_ENABLE_DM=OFF` 默认构建不受影响；`-DSAGE_TSDB_ENABLE_DM=ON` 但无真实驱动时，骨架仍可编译，运行时对未实现方法明确报错。
 
-### 阶段 3：契约文档与对接指南（D5）
+### 阶段 3：契约文档与对接指南（D5）✅ 已完成
 
-- [ ] `docs/STORAGE_BACKEND_CONTRACT.md`：逐方法说明输入/输出/线程安全/错误语义/`limit`/tag 过滤/时间范围边界（inclusive）等。
-- [ ] 达梦对接指南：另一方"如何填 TODO"、表映射建议（§3.5）、向量序列化约定（§3.6）、连接配置字段清单、凭据从环境变量读取的约定。
-- [ ] 更新 [DESIGN_DOC_SAGETSDB_PECJ.md](DESIGN_DOC_SAGETSDB_PECJ.md) 增补"存储后端抽象与达梦适配"章节（设计文档维护规则要求同步）。
+- [x] [docs/STORAGE_BACKEND_CONTRACT.md](STORAGE_BACKEND_CONTRACT.md)：逐方法说明输入/输出/线程安全/错误语义/`limit`/tag 过滤/时间范围边界（inclusive）等。
+- [x] 达梦对接指南：另一方"如何填 TODO"、表映射建议、向量序列化约定（§4 `stsb1` 含固定字节向量）、连接配置字段清单、凭据从环境变量读取的约定、ABI 约束。
+- [ ] 更新 [DESIGN_DOC_SAGETSDB_PECJ.md](DESIGN_DOC_SAGETSDB_PECJ.md) 增补"存储后端抽象与达梦适配"章节（设计文档维护规则要求同步）——待后续与主设计文档一起收口。
 
-### 阶段 4：后端一致性测试脚手架（D7）
+### 阶段 4：后端一致性测试脚手架（D7）✅ 已完成
 
-- [ ] 写一组"后端无关"的读写用例（建表→批量插入→范围查询→tag 过滤→limit→向量往返）。
-- [ ] 对 `MemoryBackend` 全绿；同一组用例对 `DamengBackend` 预置为跳过/待另一方填充后启用（差分测试框架就位）。
-- [ ] **验收**：Mock 侧一致性测试通过；达梦侧测试框架就绪、标注为 pending。
+- [x] 后端无关读写用例 `runContractSuite()`（建表→批量插入→闭区间范围→tag 过滤→limit→向量往返→清空→删表→缺表抛错），见 [tests/test_storage_backend_contract.cpp](../tests/test_storage_backend_contract.cpp)。
+- [x] `stsb1` 编解码器 [include/sage_tsdb/core/value_codec.h](../include/sage_tsdb/core/value_codec.h) + 往返/固定字节向量测试。
+- [x] 对 `MemoryBackend` 全绿；`DamengBackend` 用例在 `SAGE_TSDB_ENABLE_DM=ON` 时编译，驱动未填充时 `GTEST_SKIP`（pending），填充后自动变真实差分测试。
+- [x] **验收**：全套 167/167（原 162 + 新增 5）；达梦侧差分框架就绪、标注 pending。
 
 ### 阶段 5（可选，双方联调）：达梦真实链路
 
