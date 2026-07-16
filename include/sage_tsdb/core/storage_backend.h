@@ -331,17 +331,21 @@ private:
  * @param name_literal String literal name to register under.
  * @param BackendClass Concrete IStorageBackend subclass to construct.
  */
+#define SAGE_TSDB_CONCAT_INNER(a, b) a##b
+#define SAGE_TSDB_CONCAT(a, b) SAGE_TSDB_CONCAT_INNER(a, b)
 #define REGISTER_STORAGE_BACKEND(name_literal, BackendClass)                  \
     namespace {                                                               \
-    const bool BackendClass##_storage_backend_registered = [] {              \
-        ::sage_tsdb::core::StorageBackendRegistry::instance().registerBackend(\
-            name_literal,                                                     \
-            [](const ::sage_tsdb::core::StorageBackendConfig& cfg)           \
-                -> ::sage_tsdb::core::StorageBackendPtr {                     \
-                return std::make_unique<BackendClass>(cfg);                   \
-            });                                                               \
-        return true;                                                          \
-    }();                                                                      \
+    const bool SAGE_TSDB_CONCAT(sage_tsdb_backend_registered_, __COUNTER__) = \
+        [] {                                                                  \
+            ::sage_tsdb::core::StorageBackendRegistry::instance()             \
+                .registerBackend(                                            \
+                    name_literal,                                            \
+                    [](const ::sage_tsdb::core::StorageBackendConfig& cfg)   \
+                        -> ::sage_tsdb::core::StorageBackendPtr {            \
+                        return std::make_unique<BackendClass>(cfg);          \
+                    });                                                      \
+            return true;                                                     \
+        }();                                                                  \
     }
 
 } // namespace core

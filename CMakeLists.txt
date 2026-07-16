@@ -55,6 +55,7 @@ add_library(sage_tsdb_core
     src/core/stream_table.cpp
     src/core/join_result_table.cpp
     src/core/table_manager.cpp
+    src/core/backends/memory_backend.cpp
     src/utils/config.cpp
 )
 
