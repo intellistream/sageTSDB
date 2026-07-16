@@ -43,6 +43,11 @@ using namespace std;
 #include "Operator/LinearSVIOperator.h"
 #include "Operator/PECJOperator.h"
 #include "Common/Tuples.h"
+// MSWJ requires its sub-components to be constructed explicitly (see
+// createMSWJOperator below); MSWJOperator.h pulls in most via KSlack.h, but
+// include the profiler and stream operator headers explicitly to be safe.
+#include "Operator/MSWJ/Profiler/TupleProductivityProfiler.h"
+#include "Operator/MSWJ/Operator/StreamOperator.h"
 #include <sys/time.h>
 #endif
 
@@ -75,7 +80,71 @@ namespace {
         return std::chrono::duration_cast<std::chrono::microseconds>(
             now.time_since_epoch()).count();
     }
-    
+
+#ifdef PECJ_FULL_INTEGRATION
+    /**
+     * @brief Construct a fully-initialized MSWJ operator.
+     *
+     * Unlike the other PECJ operators, OoOJoin::MSWJOperator cannot be used
+     * after a plain default construction: its setConfig() unconditionally
+     * dereferences an internal streamOperator that is only wired up by the
+     * 7-argument parameterized constructor. Default-constructing it and calling
+     * setConfig() (as the other operators allow) dereferences a null pointer and
+     * crashes inside PECJ (StateOfKeyHashTable / MSWJOperator::setConfig).
+     *
+     * This mirrors PECJ's own benchmark helper (benchmark/src/Benchmark.cpp
+     * mswjConfiguration): it builds the MSWJ sub-components in dependency order,
+     * seeds the MSWJ-specific config keys, and constructs the operator via the
+     * parameterized constructor. setConfig() is then safe to call by the caller.
+     *
+     * @param cfg PECJ configuration map (edited in place with MSWJ defaults).
+     * @return A constructed MSWJ operator whose streamOperator is non-null.
+     */
+    std::shared_ptr<OoOJoin::MSWJOperator> createMSWJOperator(
+        const INTELLI::ConfigMapPtr& cfg) {
+        // Time-unit multipliers used by PECJ's MSWJ defaults (see Benchmark.cpp).
+        constexpr uint64_t kSeconds = 1000000;       // 1 s in PECJ time units
+        constexpr uint64_t kMillionSeconds = 1000;   // PECJ's "MILLION_SECONDS"
+
+        // MSWJ-specific configuration keys, matching PECJ's mswjConfiguration().
+        // tryU64/tryDouble style keys are read by the MSWJ sub-components; provide
+        // sensible defaults only if the caller has not already set them.
+        cfg->edit("g", static_cast<uint64_t>(10 * kMillionSeconds));
+        cfg->edit("L", static_cast<uint64_t>(50 * kMillionSeconds));
+        cfg->edit("userRecall", 0.4);
+        cfg->edit("b", static_cast<uint64_t>(10 * kMillionSeconds));
+        cfg->edit("confidenceValue", 0.5);
+        cfg->edit("P", static_cast<uint64_t>(10 * kSeconds));
+        cfg->edit("maxDelay", static_cast<uint64_t>(INT16_MAX));
+        cfg->edit("StreamCount", static_cast<uint64_t>(2));
+        cfg->edit("Stream_1", static_cast<uint64_t>(0));
+        cfg->edit("Stream_2", static_cast<uint64_t>(0));
+
+        // Build sub-components in dependency order.
+        auto tupleProductivityProfiler =
+            std::make_shared<MSWJ::TupleProductivityProfiler>(cfg);
+        auto statisticsManager = std::make_shared<MSWJ::StatisticsManager>(
+            tupleProductivityProfiler.get(), cfg);
+        auto bufferSizeManager = std::make_shared<MSWJ::BufferSizeManager>(
+            statisticsManager.get(), tupleProductivityProfiler.get());
+        auto streamOperator = std::make_shared<MSWJ::StreamOperator>(
+            tupleProductivityProfiler.get(), cfg);
+        auto synchronizer = std::make_shared<MSWJ::Synchronizer>(
+            2, streamOperator.get(), cfg);
+
+        bufferSizeManager->setConfig(cfg);
+
+        auto kSlackS = std::make_shared<MSWJ::KSlack>(
+            1, bufferSizeManager.get(), statisticsManager.get(), synchronizer.get());
+        auto kSlackR = std::make_shared<MSWJ::KSlack>(
+            2, bufferSizeManager.get(), statisticsManager.get(), synchronizer.get());
+
+        return std::make_shared<OoOJoin::MSWJOperator>(
+            bufferSizeManager, tupleProductivityProfiler, synchronizer,
+            streamOperator, statisticsManager, kSlackR, kSlackS);
+    }
+#endif // PECJ_FULL_INTEGRATION
+
 } // anonymous namespace
 
 PECJComputeEngine::PECJComputeEngine()
@@ -176,8 +245,13 @@ bool PECJComputeEngine::createPECJOperator() {
                 pecj_operator_ = std::make_shared<OoOJoin::IMAIAWJOperator>();
                 break;
             case PECJOperatorType::MSWJ:
-                pecj_operator_ = std::make_shared<OoOJoin::MSWJOperator>();
-                break;
+                // MSWJ must be built via its parameterized constructor (its
+                // setConfig derefs an internal streamOperator that default
+                // construction leaves null). createMSWJOperator() also calls
+                // setConfig() internally, so skip the shared setConfig() below.
+                pecj_operator_ = createMSWJOperator(pecj_config);
+                pecj_operator_->setWindow(config_.window_len_us, config_.slide_len_us);
+                return pecj_operator_ != nullptr;
             case PECJOperatorType::AI:
                 pecj_operator_ = std::make_shared<OoOJoin::AIOperator>();
                 break;

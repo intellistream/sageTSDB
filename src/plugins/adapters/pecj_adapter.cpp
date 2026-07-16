@@ -277,12 +277,24 @@ bool PECJAdapter::start() {
         return true;  // Already running
     }
     
-    // NOTE: Do NOT call pecj_operator_->start() here!
-    // The operator will be started by restartOperator() with correct window parameters.
-    // Calling start() twice (here and in restartOperator) causes state inconsistency
-    // because PECJ's start() doesn't fully reset all internal state variables
-    // (e.g., max_ratio, alpha in MeanAQPIAWJOperator), leading to different AQP results.
-    
+    // Prepare the PECJ operator's internal window state BEFORE any tuple is fed.
+    //
+    // In FULL_INTEGRATION mode, PECJ allocates its per-key state (StateOfKeyHashTable)
+    // inside pecj_operator_->start(), which the adapter routes through
+    // restartOperator() (setWindow + syncTimeStruct + start). Neither initializePECJ()
+    // nor this start() calls the operator's start() directly, so without the call
+    // below the worker thread would feed tuples into an operator whose state hash
+    // table is still null -> SIGSEGV in StateOfKeyHashTable::getByKey.
+    //
+    // This calls the operator's start() exactly ONCE (here only), which is the
+    // scenario the "do not start twice" guidance was protecting: the danger is
+    // calling operator start() in BOTH a separate step and restartOperator(), not
+    // calling restartOperator() a single time to make the operator ready to stream.
+    if (!restartOperator()) {
+        std::cerr << "Failed to prepare PECJ operator for streaming" << std::endl;
+        return false;
+    }
+
     running_.store(true);
     
     // Mode-specific startup
