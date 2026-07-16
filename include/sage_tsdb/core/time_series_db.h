@@ -12,17 +12,10 @@ namespace sage_tsdb {
 class TimeSeriesAlgorithm;
 class ResourceManager;
 
-/**
- * @brief Table type enumeration
- * 
- * Defines different table types for specialized storage and query patterns
- */
-enum class TableType {
-    TimeSeries,      ///< General time series data (default)
-    Stream,          ///< Stream input data (optimized for append)
-    JoinResult,      ///< Join computation results
-    ComputeState     ///< Compute engine internal state
-};
+// NOTE: enum class TableType moved to core/time_series_data.h so that the
+// storage backend contract (core/storage_backend.h) can reference it without
+// a circular include. It remains visible here via the time_series_data.h
+// include above; existing `sage_tsdb::TableType` usages are unaffected.
 
 /**
  * @brief Main time series database class

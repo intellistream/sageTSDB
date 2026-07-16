@@ -28,6 +28,21 @@ using Tags = std::map<std::string, std::string>;
 using Fields = std::map<std::string, std::string>;
 
 /**
+ * @brief Table type enumeration
+ *
+ * Defines table categories for specialized storage and query patterns.
+ * Kept in this low-level header (rather than time_series_db.h) so that both
+ * TimeSeriesDB and the pluggable storage backend contract
+ * (core/storage_backend.h) can reference it without a circular include.
+ */
+enum class TableType {
+    TimeSeries,      ///< General time series data (default)
+    Stream,          ///< Stream input data (optimized for append)
+    JoinResult,      ///< Join computation results
+    ComputeState     ///< Compute engine internal state
+};
+
+/**
  * @brief Time series data point
  * 
  * Represents a single observation in a time series with:
