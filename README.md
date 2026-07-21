@@ -125,31 +125,64 @@ For more examples, see [Python Examples](#python-usage) below.
 
 ### Prerequisites
 
-- C++17 compatible compiler (GCC 8+, Clang 7+, MSVC 2019+)
+- C++20 compatible compiler (GCC 11+, Clang 12+)
 - CMake 3.15 or higher
-- Python 3.8+ (for Python bindings)
-- pybind11
+- Python 3.10+ and pip (only for PECJ/PyTorch integration and Python bindings)
 
-### Build Instructions
+### Build Instructions (core only)
+
+Builds the time series core, built-in algorithms, and the SRTFD `statistical`
+diagnosis engine — no PECJ/PyTorch required.
 
 ```bash
 # Clone the repository
 git clone https://github.com/intellistream/sageTSDB.git
 cd sageTSDB
 
-# Create build directory
-mkdir build && cd build
-
-# Configure and build
-cmake ..
-make -j$(nproc)
+# Configure and build (out-of-source)
+cmake -B build -S . -DBUILD_TESTS=ON
+cmake --build build -j$(nproc)
 
 # Run tests
-ctest
-
-# Install (optional)
-sudo make install
+ctest --test-dir build --output-on-failure
 ```
+
+### Build with PECJ + SRTFD integration and run benchmarks
+
+To enable the PECJ out-of-order stream-join engine and run the benchmarks, you
+also clone and build PECJ (which links PyTorch). See **[QUICKSTART.md](QUICKSTART.md)**
+for the full end-to-end walkthrough. In short:
+
+```bash
+# 1. Alongside sageTSDB, clone PECJ (join engine) and SRTFD (diagnosis)
+git clone https://github.com/intellistream/PECJ.git
+git clone https://github.com/intellistream/SRTFD.git
+
+# 2. Install PyTorch (PECJ dependency) and build PECJ
+pip3 install torch==1.13.0 --index-url https://download.pytorch.org/whl/cpu
+cd PECJ && mkdir -p build && cd build
+cmake -DCMAKE_PREFIX_PATH=$(python3 -c 'import torch; print(torch.utils.cmake_prefix_path)') ..
+make -j$(nproc) && cd ../..
+
+# 3. Configure sageTSDB with PECJ deep integration
+cd sageTSDB
+cmake -B build -S . \
+    -DSAGE_TSDB_ENABLE_PECJ=ON -DPECJ_MODE=INTEGRATED \
+    -DPECJ_FULL_INTEGRATION=ON -DPECJ_DIR=../PECJ \
+    -DSAGE_TSDB_ENABLE_SRTFD=ON -DBUILD_TESTS=ON
+cmake --build build -j$(nproc)
+
+# 4. Point the loader at PECJ + Torch libs, then run a benchmark
+export LD_LIBRARY_PATH=../PECJ/build:\
+$(python3 -c 'import torch,os;print(os.path.dirname(torch.__file__))')/lib:$LD_LIBRARY_PATH
+./build/examples/performance_benchmark \
+    --s-file examples/datasets/sTuple.csv \
+    --r-file examples/datasets/rTuple.csv \
+    --output /tmp/benchmark_results.csv
+```
+
+> Enterprise database (达梦 DM) integration: see
+> [docs/STORAGE_BACKEND_CONTRACT.md](docs/STORAGE_BACKEND_CONTRACT.md).
 
 ### Build Python Bindings
 
@@ -244,12 +277,12 @@ REGISTER_ALGORITHM("my_algorithm", MyAlgorithm);
 
 ```bash
 # Run all tests
-cd build
-ctest -V
+ctest --test-dir build --output-on-failure
 
-# Run specific test
-./tests/test_time_series_db
-./tests/test_stream_join
+# Run a specific test
+./build/tests/test_time_series_db
+./build/tests/test_storage_backend_contract   # storage backend contract + stsb1 codec
+./build/tests/test_srtfd_compute_engine       # SRTFD diagnosis (statistical backend)
 ```
 
 ## 📊 Performance

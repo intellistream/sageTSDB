@@ -1315,7 +1315,20 @@ int main(int argc, char** argv) {
         generateTestData(s_data, r_data, config.event_count);
         std::cout << "OK (" << s_data.size() << " S, " << r_data.size() << " R)\n";
     }
-    
+
+    // Fail fast on empty input: the benchmark dereferences all_data.front()/back()
+    // downstream, so empty streams would crash. This typically means the CSV
+    // paths were not found and produced no rows -- point the user at --s-file/
+    // --r-file rather than segfaulting.
+    if (s_data.empty() || r_data.empty()) {
+        std::cerr << "\n[Error] No input data (S=" << s_data.size()
+                  << ", R=" << r_data.size() << ").\n"
+                  << "        Provide datasets explicitly, e.g.:\n"
+                  << "          " << argv[0]
+                  << " --s-file <path>/sTuple.csv --r-file <path>/rTuple.csv\n";
+        return 1;
+    }
+
     std::cout << std::endl;
     
     // Run benchmarks

@@ -28,6 +28,9 @@
 #include <Operator/MeanAQPIAWJOperator.h>
 #include <Operator/RawSHJOperator.h>
 #include <Operator/RawPRJOperator.h>
+// Shared helper that correctly constructs the MSWJ operator (parameterized
+// ctor + sub-components); used by both the adapter and the compute engine.
+#include "sage_tsdb/detail/pecj_mswj_factory.h"
 #endif
 
 namespace sage_tsdb {
@@ -180,6 +183,9 @@ bool PECJAdapter::initializePECJ() {
         //
         // Match Integrated Mode's approach: use std::make_shared to create operator directly.
         std::string op_name;
+        // MSWJ is built via the shared factory, which also calls setConfig()
+        // internally; skip the shared setConfig() below for it.
+        bool config_already_applied = false;
         switch (operator_type_) {
             case OperatorType::IAWJ:
                 pecj_operator_ = std::make_shared<OoOJoin::IAWJOperator>();
@@ -190,8 +196,13 @@ bool PECJAdapter::initializePECJ() {
                 op_name = "IMA";
                 break;
             case OperatorType::MSWJ:
-                pecj_operator_ = std::make_shared<OoOJoin::MSWJOperator>();
+                // MSWJ cannot be default-constructed then setConfig()'d (its
+                // setConfig derefs a null internal streamOperator -> crash).
+                // Use the shared factory that builds it via the parameterized
+                // ctor and applies setConfig() itself.
+                pecj_operator_ = detail::createMSWJOperator(pecj_config_);
                 op_name = "MSWJ";
+                config_already_applied = true;
                 break;
             case OperatorType::AI:
                 pecj_operator_ = std::make_shared<OoOJoin::AIOperator>();
@@ -232,7 +243,9 @@ bool PECJAdapter::initializePECJ() {
         // - Call setBufferLen() to set buffer lengths
         // - Do NOT call syncTimeStruct() here - it will be called in restartOperator()
         //   This matches Integrated Mode which doesn't call syncTimeStruct() in initialize()
-        pecj_operator_->setConfig(pecj_config_);
+        if (!config_already_applied) {
+            pecj_operator_->setConfig(pecj_config_);
+        }
         pecj_operator_->setWindow(window_config_.window_len_us, window_config_.slide_len_us);
         pecj_operator_->setBufferLen(window_config_.s_buffer_len, window_config_.r_buffer_len);
         // syncTimeStruct() will be called in restartOperator() before start()
