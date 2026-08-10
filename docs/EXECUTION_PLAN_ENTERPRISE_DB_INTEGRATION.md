@@ -235,19 +235,19 @@ SRTFD 默认 `input_dim = 52`，每条样本是 52 维向量。`value` 是 `std:
 
 ## 5. 分阶段执行计划（SDK 侧，均不需真实达梦）
 
-### 阶段 1：存储后端抽象 + 内存后端（D1、D2、D4）
+### 阶段 1：存储后端抽象 + 内存后端（D1、D2、D4）✅ 已完成
 
-- [ ] 新增 `IStorageBackend`（§3.2）与 `StorageBackendConfig`、后端工厂。
-- [ ] 实现 `MemoryBackend`：封装现有 `TimeSeriesIndex`，逐字段对齐当前语义。
-- [ ] 改造 `TimeSeriesDB`：内部持有 `std::unique_ptr<IStorageBackend>`，默认注入 `MemoryBackend`；`query/insert/createTable/...` 转发到后端。
-- [ ] **验收门禁**：现有全部测试（`test_time_series_db`、`test_srtfd_compute_engine` 等）**不改一行、全绿**。这是零行为变化的证明。
+- [x] 新增 `IStorageBackend`（§3.2）与 `StorageBackendConfig`、后端工厂。
+- [x] 实现 `MemoryBackend`：封装现有 `TimeSeriesIndex`，逐字段对齐当前语义。
+- [x] 改造 `TimeSeriesDB`：内部持有 `std::unique_ptr<IStorageBackend>`，默认注入 `MemoryBackend`；`query/insert/createTable/...` 转发到后端。
+- [x] **验收门禁**：现有全部测试（`test_time_series_db`、`test_srtfd_compute_engine` 等）**不改一行、全绿**。这是零行为变化的证明。
 
-### 阶段 2：达梦适配器骨架 + 构建开关（D3、D6）
+### 阶段 2：达梦适配器骨架 + 构建开关（D3、D6）✅ 已完成
 
-- [ ] CMake 新增 `option(SAGE_TSDB_ENABLE_DM OFF)` + 达梦库 `find_library`/`find_path` 模板（缺失时给清晰提示，不静默跳过）。
-- [ ] 编写 `DamengBackend` 骨架：完整方法签名、参数校验、错误路径、日志点、`// TODO(DM):` 填充位与注释契约（§3.4）。
-- [ ] 未启用/未填充时 fail-fast，明确报错，**绝不回退内存**（ADR 0001）。
-- [ ] **验收**：`-DSAGE_TSDB_ENABLE_DM=OFF` 默认构建不受影响；`-DSAGE_TSDB_ENABLE_DM=ON` 但无真实驱动时，骨架仍可编译，运行时对未实现方法明确报错。
+- [x] CMake 新增 `option(SAGE_TSDB_ENABLE_DM OFF)` + 达梦库 `find_library`/`find_path` 模板（缺失时给清晰提示，不静默跳过）。
+- [x] 编写 `DamengBackend` 骨架：完整方法签名、参数校验、错误路径、日志点、`// TODO(DM):` 填充位与注释契约（§3.4）。**15 个 `TODO(DM)` 填充点就绪**。
+- [x] 未启用/未填充时 fail-fast，明确报错，**绝不回退内存**（ADR 0001）。
+- [x] **验收**：`-DSAGE_TSDB_ENABLE_DM=OFF` 默认构建不受影响；`-DSAGE_TSDB_ENABLE_DM=ON` 但无真实驱动时，骨架仍可编译，运行时对未实现方法明确报错。
 
 ### 阶段 3：契约文档与对接指南（D5）✅ 已完成
 
@@ -268,20 +268,67 @@ SRTFD 默认 `input_dim = 52`，每条样本是 52 维向量。`value` 是 `std:
 
 ---
 
-## 6. 里程碑与工作量估算（SDK 侧）
+## 6. 当前实施状态总结（2026-08-10）
 
-| 里程碑 | 交付物 | 估算 |
+### 6.1 已交付代码清单
+
+| 交付物 | 文件 | 状态 | 说明 |
+| --- | --- | --- | --- |
+| **抽象接口** | [include/sage_tsdb/core/storage_backend.h](../include/sage_tsdb/core/storage_backend.h) | ✅ | `IStorageBackend` 接口 11 个方法 + 工厂注册 + 配置类 |
+| | [src/core/storage_backend.cpp](../src/core/storage_backend.cpp) | ✅ | 单例工厂实现（跨 .so 唯一） |
+| **内存后端** | [include/sage_tsdb/core/backends/memory_backend.h](../include/sage_tsdb/core/backends/memory_backend.h) | ✅ | 封装 `TimeSeriesIndex`，默认后端 & 回归基线 |
+| | [src/core/backends/memory_backend.cpp](../src/core/backends/memory_backend.cpp) | ✅ | 全方法实现 + 自动注册为 `"memory"` |
+| **达梦骨架** | [include/sage_tsdb/core/backends/dameng_backend.h](../include/sage_tsdb/core/backends/dameng_backend.h) | ✅ | PIMPL 结构，零达梦头文件依赖 |
+| | [src/core/backends/dameng_backend.cpp](../src/core/backends/dameng_backend.cpp) | ✅ | **15 个 `TODO(DM)` 填充点**，每个配契约注释；自动注册为 `"dameng"` |
+| **TimeSeriesDB 改造** | [include/sage_tsdb/core/time_series_db.h](../include/sage_tsdb/core/time_series_db.h) | ✅ | 内部替换为 `unique_ptr<IStorageBackend>` |
+| | [src/core/time_series_db.cpp](../src/core/time_series_db.cpp) | ✅ | 路由 API 到后端；保留表名过滤逻辑 |
+| **值编解码器** | [include/sage_tsdb/core/value_codec.h](../include/sage_tsdb/core/value_codec.h) | ✅ | `stsb1` 字节格式（标量 20B / 52 维 428B）|
+| **契约文档** | [docs/STORAGE_BACKEND_CONTRACT.md](STORAGE_BACKEND_CONTRACT.md) | ✅ | 211 行：逐方法契约表 + 达梦对接指南 + 固定测试向量 |
+| **一致性测试** | [tests/test_storage_backend_contract.cpp](../tests/test_storage_backend_contract.cpp) | ✅ | 差分测试套件 + stsb1 编解码验证（5/5 通过）|
+| **构建配置** | [CMakeLists.txt](../CMakeLists.txt):186-204 | ✅ | `SAGE_TSDB_ENABLE_DM` 开关 + `TODO(DM)` 链接模板 |
+
+### 6.2 测试验收结果
+
+- **全局回归**：167/167 测试通过（含原有 162 + 新增 5），零行为变化 ✅
+- **后端契约测试**：`MemoryBackend` 差分基线全绿 ✅
+- **达梦骨架编译**：`-DSAGE_TSDB_ENABLE_DM=ON` 时无驱动依赖仍可构建，运行时抛 `NotImplemented` 清晰报错 ✅
+- **benchmark 端到端**：`performance_benchmark` 完整 48 组 + `pecj_integrated_vs_plugin_benchmark` 全通过 ✅
+
+### 6.3 待填充工作（达梦方接手点）
+
+达梦适配器 `src/core/backends/dameng_backend.cpp` 内 **15 个 `TODO(DM)` 填充点**：
+
+| 方法 | TODO 数 | 填充内容 |
 | --- | --- | --- |
-| M1 抽象层 + 内存后端落地 | D1、D2、D4，旧测试全绿 | ~2 天 |
-| M2 达梦骨架 + 构建开关 | D3、D6，两种开关均可编译 | ~2 天 |
-| M3 契约文档与对接指南 | D5 | ~1.5 天 |
-| M4 一致性测试脚手架 | D7 | ~1 天 |
-
-合计约 **6–7 个工作日**（纯 SDK 侧，不含另一方达梦实现与联调）。
+| `ensureConnected()` | 1 | 连接建立（DPI/ODBC）+ 错误处理 |
+| `createTable()` | 1 | DDL：`CREATE TABLE IF NOT EXISTS` + 列定义 |
+| `dropTable()` | 1 | DDL：`DROP TABLE IF EXISTS` |
+| `hasTable()` | 1 | 目录查询：表是否存在 |
+| `listTables()` | 1 | 目录查询：返回去前缀的逻辑表名列表 |
+| `insert()` | 1 | 参数化单行插入 + `stsb1` 编码 |
+| `insertBatch()` | 1 | **性能关键**：批量绑定 + 单事务 |
+| `query()` | 1 | 参数化查询：闭区间时间范围 + tag 过滤 + limit + `stsb1` 解码 |
+| `size()` | 1 | `SELECT COUNT(*)` |
+| `clear()` | 1 | `TRUNCATE TABLE` 或 `DELETE` |
+| `flush()` | 1 | 事务提交/落盘 |
+| **CMakeLists.txt** | 4 行 | `find_path` / `find_library` / `target_include_directories` / `target_link_libraries` |
 
 ---
 
-## 7. 风险与对策
+## 7. 里程碑与工作量估算（SDK 侧）
+
+| 里程碑 | 交付物 | 估算 | 实际状态 |
+| --- | --- | --- | --- |
+| M1 抽象层 + 内存后端落地 | D1、D2、D4，旧测试全绿 | ~2 天 | ✅ 完成 |
+| M2 达梦骨架 + 构建开关 | D3、D6，两种开关均可编译 | ~2 天 | ✅ 完成 |
+| M3 契约文档与对接指南 | D5 | ~1.5 天 | ✅ 完成 |
+| M4 一致性测试脚手架 | D7 | ~1 天 | ✅ 完成 |
+
+**SDK 侧开发已完成**（实际耗时约 6 个工作日）。当前进入 **M5 联调准备阶段**（见 §9）。
+
+---
+
+## 8. 风险与对策
 
 | 风险 | 影响 | 对策 |
 | --- | --- | --- |
@@ -294,7 +341,108 @@ SRTFD 默认 `input_dim = 52`，每条样本是 52 维向量。`value` 是 `std:
 
 ---
 
-## 8. 决策记录与待确认事项
+## 9. 联调准备清单（双方职责界面）
+
+### 9.1 我方（sageTSDB SDK）已提供
+
+| # | 交付项 | 形式 | 用途 |
+| --- | --- | --- | --- |
+| **1. 接口契约** | [docs/STORAGE_BACKEND_CONTRACT.md](STORAGE_BACKEND_CONTRACT.md) | 文档（211 行） | 达梦方实现的**唯一规范**：每个方法的输入/输出/错误/线程安全 |
+| **2. 达梦对接指南** | 同上文档 §5-6 | 文档章节 | 如何填 `TODO(DM)`、表结构映射建议、连接配置字段清单 |
+| **3. 适配器骨架** | [src/core/backends/dameng_backend.cpp](../src/core/backends/dameng_backend.cpp) | 源码（218 行） | **15 个填充点**，每个 `TODO(DM)` 配注释说明期望行为 |
+| **4. 值序列化格式** | [include/sage_tsdb/core/value_codec.h](../include/sage_tsdb/core/value_codec.h) | 头文件（可复用） | `stsb1` 编解码器（标量/向量统一格式）+ 固定测试向量 |
+| **5. 差分测试框架** | [tests/test_storage_backend_contract.cpp](../tests/test_storage_backend_contract.cpp) | 测试代码 | `runContractSuite()` 后端无关用例 + 与 `MemoryBackend` 对拍 |
+| **6. 构建模板** | [CMakeLists.txt](../CMakeLists.txt):192-201 | 构建脚本 TODO | `find_path`/`find_library` 填充位 + ABI 约束说明 |
+| **7. 连接参数结构** | `DamengBackend::ConnectionParams` | C++ struct | 7 个字段：`host`/`port`/`user`/`password`/`schema`/`table_prefix`/`driver` |
+| **8. 示例配置** | 契约文档 §5.3 表格 | 文档 | 每个参数的默认值 + `password_env` 环境变量约定 |
+| **9. 时间语义规范** | 契约文档 §2、§3 | 文档 | **微秒（μs）** 单位 + 闭区间 `[start, end]` + 无隐式换算 |
+| **10. 技术支持渠道** | 本文档 + 代码注释 | — | 填充过程中疑问可通过本方技术对接人澄清 |
+
+### 9.2 达梦方需提供
+
+| # | 提供项 | 形式 | 何时需要 | 说明 |
+| --- | --- | --- | --- | --- |
+| **1. SDK / 驱动包** | 头文件 + 库文件 | 二进制/源码包 | 联调前 | DPI（`DPI.h` + `libdmdpi.so`）或 ODBC（`sql*.h` + `libdodbc.so`）；**ABI 必须兼容 `_GLIBCXX_USE_CXX11_ABI=0`** |
+| **2. 安装路径约定** | 环境变量或标准路径 | — | 联调前 | 如 `$DM_HOME/include`、`$DM_HOME/lib`；用于 CMake `HINTS` |
+| **3. 连接参数** | 配置文件或环境变量 | YAML/JSON/ENV | 联调时 | `host`、`port`、`user`、`schema`；密码通过 `$DM_PASSWORD` 环境变量 |
+| **4. 数据库实例** | 运行中的达梦服务 | 网络可达 | 联调时 | 可创建/删除表、支持 `BIGINT` + `VARBINARY`/`BLOB`/`CLOB` 列类型 |
+| **5. Schema 权限** | DDL + DML 权限 | 数据库权限 | 联调时 | 用户能执行 `CREATE TABLE`、`DROP TABLE`、`INSERT`、`SELECT`、`TRUNCATE`、目录查询 |
+| **6. 表结构设计方案** | DDL 脚本（建议） | SQL 文件 | 联调前或中 | 基于契约文档 §5.1 的映射建议，给出具体列定义 + 索引 + 分区策略 |
+| **7. 驱动 API 文档** | 达梦官方文档 | PDF/在线 | 填充时 | DPI/ODBC 接口说明：连接建立、参数绑定、错误处理、事务控制 |
+| **8. 填充后的代码** | 改写后的 `dameng_backend.cpp` | 源码 | 联调时 | 全部 15 个 `TODO(DM)` 已填充的实现 + 对应的 CMake 链接配置 |
+| **9. 单元测试数据** | 小规模样例数据（可选） | CSV/SQL | 联调时 | 用于验证时间范围/tag 过滤/向量往返的正确性 |
+| **10. 技术对接人** | 熟悉达梦驱动的工程师 | 联系方式 | 联调全程 | 处理连接失败、SQL 错误、性能优化等达梦特定问题 |
+
+### 9.3 联调协作流程
+
+```mermaid
+sequenceDiagram
+    participant SDK as sageTSDB SDK (本方)
+    participant DM_Dev as 达梦开发方
+    participant DM_DB as 达梦数据库实例
+
+    Note over SDK,DM_Dev: 阶段 0：准备（并行）
+    SDK->>DM_Dev: 交付骨架 + 契约文档 + 测试框架
+    DM_Dev->>SDK: 提供 SDK/驱动包 + 连接参数
+    
+    Note over SDK,DM_Dev: 阶段 1：驱动接入（达梦方）
+    DM_Dev->>DM_Dev: 填充 15 个 TODO(DM)
+    DM_Dev->>DM_Dev: 补充 CMakeLists.txt 链接配置
+    DM_Dev->>SDK: 提交 PR 或发送改写后代码
+
+    Note over SDK,DM_Dev: 阶段 2：编译验证（本方）
+    SDK->>SDK: cmake -DSAGE_TSDB_ENABLE_DM=ON
+    SDK->>SDK: 构建成功 → 进阶段 3
+    SDK-->>DM_Dev: 构建失败 → 反馈错误（ABI/头文件/链接）
+
+    Note over SDK,DM_Dev: 阶段 3：连接联调
+    SDK->>DM_DB: 通过 DamengBackend 建连
+    DM_DB-->>SDK: 连接成功 → 进阶段 4
+    DM_DB-->>SDK: 连接失败 → 达梦方排查网络/权限/配置
+
+    Note over SDK,DM_Dev: 阶段 4：契约差分测试
+    SDK->>SDK: 运行 test_storage_backend_contract
+    SDK->>DM_DB: 执行建表/插入/查询/删表操作
+    DM_DB-->>SDK: 返回结果
+    SDK->>SDK: 与 MemoryBackend 对拍
+    alt 差分为 0
+        SDK->>DM_Dev: ✅ 契约测试通过 → 进阶段 5
+    else 差分非 0
+        SDK->>DM_Dev: ❌ 列出不一致项（时间/tag/向量/顺序）
+        DM_Dev->>DM_Dev: 修正 SQL/编解码/时间单位
+        DM_Dev->>SDK: 重新提交
+    end
+
+    Note over SDK,DM_Dev: 阶段 5：端到端验证
+    SDK->>SDK: 配置 SRTFD/PECJ 使用 dameng 后端
+    SDK->>DM_DB: 运行 compute engine 写入/读取
+    DM_DB-->>SDK: 返回结果
+    SDK->>SDK: 验证计算正确性 + 性能基线
+    SDK->>DM_Dev: ✅ 集成验收通过
+```
+
+### 9.4 集成验收标准
+
+达梦后端集成通过验收需满足以下**全部条件**：
+
+| # | 验收项 | 标准 | 验证方法 |
+| --- | --- | --- | --- |
+| **1. 编译通过** | `-DSAGE_TSDB_ENABLE_DM=ON` 构建成功 | 无链接错误、无头文件缺失 | `cmake --build build` |
+| **2. 连接成功** | 能建立到达梦实例的连接 | 不抛 `runtime_error` | 运行任一测试用例 |
+| **3. 契约测试全绿** | `test_storage_backend_contract` 全通过 | `StorageBackendContract.DamengBackend` 从 SKIPPED 变 PASSED | `ctest -R storage_backend_contract` |
+| **4. 差分为 0** | 达梦后端与内存后端对同一输入的结果完全一致 | 时间范围/tag 过滤/limit/向量往返/顺序全对齐 | 差分测试断言 |
+| **5. 向量往返正确** | 52 维向量经 `stsb1` 编解码后与原值一致 | 误差 `< 1e-9`（IEEE-754 精度） | `Stsb1Codec.VectorRoundTrip` + 后端用例 |
+| **6. 时间语义正确** | 微秒单位 + 闭区间边界 | 边界点记录被正确包含/排除 | 契约测试中的时间范围断言 |
+| **7. 错误处理明确** | 表不存在、连接失败等抛 `runtime_error` | 不静默失败、不回退内存 | 尝试查询不存在的表 |
+| **8. SRTFD 端到端** | SRTFD 计算引擎能用达梦后端跑通 | 诊断结果与内存后端一致 | `test_srtfd_compute_engine` 配置切换 |
+| **9. PECJ 端到端** | PECJ 计算引擎能用达梦后端跑通 | Join 结果与内存后端一致 | `test_pecj_compute_engine` 配置切换 |
+| **10. 性能基线** | `insertBatch` 1000 条 < 500ms（参考） | 批量绑定生效，非逐行插入 | Benchmark 或手动计时 |
+
+**最小验收门禁**：前 7 项为必须；8-10 项为联调后期/性能优化阶段确认。
+
+---
+
+## 10. 决策记录与待确认事项
 
 ### 已决策（本次确认，写入契约）
 
@@ -311,7 +459,7 @@ SRTFD 默认 `input_dim = 52`，每条样本是 52 维向量。`value` 是 `std:
 
 ---
 
-## 附录 A：关键代码坐标
+## 11. 附录 A：关键代码坐标
 
 - 计算引擎读写唯一入口（不改动）：
   - SRTFD: [src/compute/srtfd_compute_engine.cpp:143](../src/compute/srtfd_compute_engine.cpp#L143)、[:300](../src/compute/srtfd_compute_engine.cpp#L300)
