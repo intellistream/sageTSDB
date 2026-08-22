@@ -619,8 +619,8 @@ int main(int argc, char** argv) {
     std::cout << "[Step 6] Querying join results from sageTSDB...\n";
     
     QueryConfig query_config;
-    query_config.time_range.start_time = min_time;
-    query_config.time_range.end_time = max_time;
+    query_config.time_range.start_us = min_time;
+    query_config.time_range.end_us = max_time;
     
     auto results = db.query("join_results", query_config);
     

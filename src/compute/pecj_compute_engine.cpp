@@ -275,11 +275,8 @@ ComputeStatus PECJComputeEngine::executeWindowJoin(uint64_t window_id,
         }
         
         // Step 1: Query data from sageTSDB tables
-        // Create TimeRange for query
-        sage_tsdb::TimeRange query_range;
-        query_range.start_time = time_range.start_us;
-        query_range.end_time = time_range.end_us;
-        
+        // Explicit conversion: compute::TimeRange → sage_tsdb::TimeRange (different namespaces, same fields)
+        sage_tsdb::TimeRange query_range(time_range.start_us, time_range.end_us);
         auto s_data_tsdb = db_->query(config_.stream_s_table, query_range);
         auto r_data_tsdb = db_->query(config_.stream_r_table, query_range);
         

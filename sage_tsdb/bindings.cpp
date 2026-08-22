@@ -49,14 +49,14 @@ PYBIND11_MODULE(_sage_tsdb, m) {
     // TimeRange class
     py::class_<TimeRange>(m, "TimeRange")
         .def(py::init<int64_t, int64_t>(),
-             py::arg("start_time"),
-             py::arg("end_time"))
-        .def_readwrite("start_time", &TimeRange::start_time)
-        .def_readwrite("end_time", &TimeRange::end_time)
+             py::arg("start_us"),
+             py::arg("end_us"))
+        .def_readwrite("start_us", &TimeRange::start_us)
+        .def_readwrite("end_us", &TimeRange::end_us)
         .def("__repr__", [](const TimeRange& range) {
             std::ostringstream oss;
-            oss << "<TimeRange start=" << range.start_time 
-                << " end=" << range.end_time << ">";
+            oss << "<TimeRange start=" << range.start_us
+                << " end=" << range.end_us << ">";
             return oss.str();
         });
 

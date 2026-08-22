@@ -131,7 +131,7 @@ SRTFDStatus SRTFDComputeEngine::executeWindowDiagnosis(
         updateMetrics(status);
         return status;
     }
-    if (time_range.end_time < time_range.start_time) {
+    if (time_range.end_us < time_range.start_us) {
         status.error = "Invalid time range";
         updateMetrics(status);
         return status;

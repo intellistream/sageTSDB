@@ -100,20 +100,20 @@ struct TimeSeriesData {
  * @brief Time range for queries
  */
 struct TimeRange {
-    int64_t start_time;  // inclusive
-    int64_t end_time;    // inclusive
-    
-    TimeRange() : start_time(0), end_time(0) {}
-    
+    int64_t start_us;  // inclusive, microseconds since epoch
+    int64_t end_us;    // inclusive, microseconds since epoch
+
+    TimeRange() : start_us(0), end_us(0) {}
+
     TimeRange(int64_t start, int64_t end)
-        : start_time(start), end_time(end) {}
-    
+        : start_us(start), end_us(end) {}
+
     bool contains(int64_t timestamp) const {
-        return timestamp >= start_time && timestamp <= end_time;
+        return timestamp >= start_us && timestamp <= end_us;
     }
-    
+
     int64_t duration() const {
-        return end_time - start_time;
+        return end_us - start_us;
     }
 };
 

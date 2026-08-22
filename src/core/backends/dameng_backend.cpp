@@ -173,7 +173,7 @@ std::vector<TimeSeriesData> DamengBackend::query(
     (void)config;
     ensureConnected();
     // TODO(DM): SELECT from physicalTable(table) WHERE ts BETWEEN
-    //   config.time_range.start_time AND end_time (INCLUSIVE, microseconds),
+    //   config.time_range.start_us AND end_us (INCLUSIVE, microseconds),
     //   pushing tag filters into the WHERE clause and applying config.limit
     //   (limit <= 0 means no limit). Decode value via the stsb1 codec. Ordering
     //   and results MUST match core::MemoryBackend for the same inputs.

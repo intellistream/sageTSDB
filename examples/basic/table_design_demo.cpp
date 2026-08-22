@@ -97,7 +97,7 @@ int main() {
     auto s_data = stream_s->query(window1);
     auto r_data = stream_r->query(window1);
     
-    std::cout << "Window [" << window1.start_time << ", " << window1.end_time << "]:" << std::endl;
+    std::cout << "Window [" << window1.start_us << ", " << window1.end_us << "]:" << std::endl;
     std::cout << "  Stream S: " << s_data.size() << " records" << std::endl;
     std::cout << "  Stream R: " << r_data.size() << " records" << std::endl;
     
@@ -118,7 +118,7 @@ int main() {
     // 创建 Join 结果记录
     JoinResultTable::JoinRecord result;
     result.window_id = 1;
-    result.timestamp = window1.end_time;
+    result.timestamp = window1.end_us;
     result.join_count = join_count;
     result.selectivity = static_cast<double>(join_count) / (s_data.size() * r_data.size());
     
@@ -161,7 +161,7 @@ int main() {
         
         JoinResultTable::JoinRecord win_result;
         win_result.window_id = win_id;
-        win_result.timestamp = window.end_time;
+        win_result.timestamp = window.end_us;
         win_result.join_count = win_join_count;
         win_result.selectivity = s_win.empty() || r_win.empty() ? 0.0 :
             static_cast<double>(win_join_count) / (s_win.size() * r_win.size());

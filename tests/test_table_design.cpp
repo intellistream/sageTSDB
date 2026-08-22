@@ -420,7 +420,7 @@ TEST(IntegrationTest, EndToEndWorkflow) {
     
     JoinResultTable::JoinRecord result;
     result.window_id = 1;
-    result.timestamp = window.end_time;
+    result.timestamp = window.end_us;
     result.join_count = join_count;
     result.metrics.computation_time_ms = 10.5;
     result.metrics.algorithm_type = "IAWJ";

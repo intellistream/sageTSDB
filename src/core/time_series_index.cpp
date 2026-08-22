@@ -51,8 +51,8 @@ std::vector<TimeSeriesData> TimeSeriesIndex::query(
     }
     
     // Binary search for time range
-    size_t start_idx = binary_search(config.time_range.start_time);
-    size_t end_idx = binary_search(config.time_range.end_time, true);
+    size_t start_idx = binary_search(config.time_range.start_us);
+    size_t end_idx = binary_search(config.time_range.end_us, true);
     
     // Filter by tags if specified
     std::vector<TimeSeriesData> results;

@@ -125,7 +125,7 @@ std::vector<TimeSeriesData> StreamTable::query(const TimeRange& range,
     
     // 从 MemTable 查询
     if (memtable_) {
-        auto mem_results = memtable_->range_query(range.start_time, range.end_time);
+        auto mem_results = memtable_->range_query(range.start_us, range.end_us);
         // 应用标签过滤
         for (const auto& data : mem_results) {
             bool match = true;
@@ -143,7 +143,7 @@ std::vector<TimeSeriesData> StreamTable::query(const TimeRange& range,
     
     // 从 Immutable MemTable 查询
     if (immutable_memtable_) {
-        auto immut_results = immutable_memtable_->range_query(range.start_time, range.end_time);
+        auto immut_results = immutable_memtable_->range_query(range.start_us, range.end_us);
         for (const auto& data : immut_results) {
             bool match = true;
             for (const auto& [key, value] : filter_tags) {
@@ -225,13 +225,13 @@ size_t StreamTable::count(const TimeRange& range) const {
     
     // 从 MemTable 统计
     if (memtable_) {
-        auto mem_results = memtable_->range_query(range.start_time, range.end_time);
+        auto mem_results = memtable_->range_query(range.start_us, range.end_us);
         total += mem_results.size();
     }
     
     // 从 Immutable MemTable 统计
     if (immutable_memtable_) {
-        auto immut_results = immutable_memtable_->range_query(range.start_time, range.end_time);
+        auto immut_results = immutable_memtable_->range_query(range.start_us, range.end_us);
         total += immut_results.size();
     }
     
