@@ -334,6 +334,9 @@ bool PECJAdapter::stop() {
             return true;  // Already stopped
         }
         
+        // Serialize the wait predicate update with the worker entering wait().
+        // Otherwise the stop notification can be lost before it starts waiting.
+        std::lock_guard<std::mutex> queue_lock(queue_mutex_);
         running_.store(false);
     }
     

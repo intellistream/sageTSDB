@@ -48,6 +48,17 @@ TEST_F(PECJAdapterTest, StartStopTest) {
     EXPECT_TRUE(adapter.stop());
 }
 
+TEST_F(PECJAdapterTest, RepeatedStartStopWithEmptyQueueTest) {
+    PECJAdapter adapter(config_);
+    ASSERT_TRUE(adapter.initialize(config_));
+
+    for (int iteration = 0; iteration < 200; ++iteration) {
+        SCOPED_TRACE(iteration);
+        ASSERT_TRUE(adapter.start());
+        ASSERT_TRUE(adapter.stop());
+    }
+}
+
 TEST_F(PECJAdapterTest, FeedDataTest) {
     PECJAdapter adapter(config_);
     adapter.initialize(config_);
