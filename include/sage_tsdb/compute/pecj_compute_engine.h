@@ -14,6 +14,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
 #include <shared_mutex>
@@ -135,6 +136,8 @@ inline bool operatorSupportsAQP(PECJOperatorType type) {
         case PECJOperatorType::MeanAQP:
         case PECJOperatorType::IMA:
         case PECJOperatorType::MSWJ:
+        case PECJOperatorType::AI:
+        case PECJOperatorType::LinearSVI:
         case PECJOperatorType::IAWJSel:
         case PECJOperatorType::LazyIAWJSel:
         case PECJOperatorType::PECJ:
@@ -174,6 +177,10 @@ struct ComputeConfig {
     
     // MSWJ specific
     bool mswj_compensation = false;        ///< Enable linear compensation in MSWJ
+
+    // Original PECJ neural operators load their own upstream model assets.
+    std::string ai_mode = "inference";
+    std::string model_prefix = "linearVAE";
     
     // Resource limits
     size_t max_memory_bytes = 2ULL * 1024 * 1024 * 1024;  ///< 2GB default
@@ -253,7 +260,7 @@ struct ComputeMetrics {
  * - Does NOT hold any data buffers
  * - Does NOT create threads (uses ResourceHandle to submit tasks)
  * - Does NOT manage lifecycle (scheduled by sageTSDB)
- * - Computation results are written back to sageTSDB tables
+ * - Computation results are returned in ComputeStatus
  * 
  * Usage Pattern:
  * 1. Initialize once with configuration
@@ -294,9 +301,10 @@ public:
      * 1. Query stream_s and stream_r from db for the time_range
      * 2. Convert data to PECJ format
      * 3. Invoke PECJ core algorithm to perform join
-     * 4. Convert results back to sageTSDB format
-     * 5. Write results to join_results table
-     * 6. Return computation statistics
+     * 4. Return computation statistics
+     *
+     * Calls on the same engine instance are serialized because the underlying
+     * PECJ operator owns mutable per-window state.
      */
     ComputeStatus executeWindowJoin(uint64_t window_id,
                                     const TimeRange& time_range);
@@ -331,6 +339,7 @@ private:
     core::ResourceHandle* resource_handle_;     ///< Resource handle (not owned)
     ComputeConfig config_;                      ///< Algorithm configuration
     std::atomic<bool> initialized_;             ///< Initialization flag
+    std::mutex execution_mutex_;                ///< Serializes use of the PECJ operator
     
     // === PECJ Operator ===
 #ifdef PECJ_FULL_INTEGRATION

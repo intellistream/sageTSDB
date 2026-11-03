@@ -1,8 +1,9 @@
-# sageTSDB 计算层接口文档 v1.0
+# sageTSDB 计算层接口文档 v1.1
 
-**适用范围**：企业级数据库集成方，仅使用 sageTSDB 计算组件（`sage_tsdb_pecj_engine`），不涉及存储层实现。
+**适用范围**：企业级数据库集成方，仅使用 PECJ + sageTSDB 计算组件（CMake 目标 `sageTSDB::compute`），不涉及存储层实现。
 
-**最后更新**：2026-08-13
+**最后更新**：2026-08-22
+**交付与验收**：见 [`PECJ_COMPUTE_COMPONENT_DELIVERY.md`](PECJ_COMPUTE_COMPONENT_DELIVERY.md)
 
 ---
 
@@ -149,7 +150,7 @@ struct TimeRange {
 
 ```cpp
 struct TimeSeriesData {
-    int64_t        timestamp;  // 时间戳，单位：毫秒（ms）
+    int64_t        timestamp;  // 计算组件输入事件时间，单位：微秒（us）
     TimeSeriesValue value;     // double 或 vector<double>
     Tags            tags;      // map<string,string>，用于存放 join key
     Fields          fields;    // map<string,string>，用于存放 payload
@@ -218,8 +219,8 @@ struct ComputeConfig {
 | `"MSWJ"` | `MSWJ` | 多流窗口连接（ICDE 2016） | ✓ |
 | `"IAWJSel"` | `IAWJSel` | IAWJ + 选择率 AQP（粗粒度） | ✓ |
 | `"LazyIAWJSel"` | `LazyIAWJSel` | 延迟计算版 IAWJSel | ✓ |
-| `"AI"` | `AI` | AI 增强算子 | ✗ |
-| `"LinearSVI"` | `LinearSVI` | 线性随机变分推断 | ✗ |
+| `"AI"` | `AI` | AI 增强算子；需另行部署 `torchscripts` 模型资产 | ✗ |
+| `"LinearSVI"` | `LinearSVI` | 线性随机变分推断；需另行部署模型资产 | ✗ |
 | `"SHJ"` | `SHJ` | 对称哈希连接（原始基线） | ✗ |
 | `"PRJ"` | `PRJ` | 渐进连接（原始基线） | ✗ |
 
@@ -346,18 +347,18 @@ ComputeStatus executeWindowJoin(uint64_t         window_id,
 
 **执行流程（实现内部）：**
 
-1. 将 `time_range` 转换为 `sage_tsdb::TimeRange`（字段映射：`start_us → start_time`，`end_us → end_time`）
+1. 将左闭右开的计算窗口转换为 core 层闭区间：`[start_us, end_us - 1]`
 2. 调用 `db->query(stream_s_table, ...)` 和 `db->query(stream_r_table, ...)` 取数据
 3. 对所有时间戳做归一化（减去最小时间戳），使 PECJ 算子在 `[0, window_len]` 内工作
 4. 调用 `pecj_operator_->start()` 重置算子状态
 5. 依次调用 `feedTupleS()` / `feedTupleR()` 喂入数据
-6. 调用 `getResult()` 和 `getAQPResult()` 取连接结果
-7. 调用 `pecj_operator_->stop()`
+6. 调用 `pecj_operator_->stop()` 完成延迟计算
+7. 调用 `getResult()` 和 `getAQPResult()` 取连接结果
 8. 更新内部 `ComputeMetrics`
 
 **返回**：`ComputeStatus`，详见 §3.5。
 
-**线程安全**：不保证，`WindowScheduler` 通过 `ResourceHandle::submitTask()` 串行化调用。
+**线程安全**：同一引擎实例的执行会由内部互斥锁串行化。多个线程可以调用，但单实例不会并行计算多个窗口；需要窗口并行时创建多个引擎实例。
 
 ---
 
@@ -533,7 +534,7 @@ void onWindowCompleted(WindowCallback callback);  // 窗口计算成功后触发
 void onWindowFailed(WindowCallback callback);     // 窗口计算失败后触发
 ```
 
-回调在 `ResourceHandle::submitTask()` 提交的线程中执行，**不在调度线程中**。回调函数内不应抛出异常（内部 catch 后仅打印，不会传播）。
+正常计算的回调在 `ResourceHandle::submitTask()` 提交的线程中执行。若 `submitTask()` 拒绝任务，失败回调在调度线程中执行。回调函数内不应抛出异常（内部 catch 后仅打印，不会传播）。
 
 ---
 
@@ -721,21 +722,14 @@ scheduler->stop(true);   // 等待所有活跃窗口计算完成
 | `PECJ_MODE_INTEGRATED` | 启用计算引擎和调度器的完整代码；未定义时头文件中所有内容被 `#ifdef` 隐藏 |
 | `PECJ_FULL_INTEGRATION` | 实际链接 PECJ 算子库；未定义时引擎以 Stub 模式运行（返回成功但 `join_count=0`） |
 
-**CMake 配置：**
+使用交付包时，编译宏和依赖由导出的 CMake 目标传递，调用方不得手工复制这些宏：
 
 ```cmake
-target_compile_definitions(your_target PRIVATE
-    PECJ_MODE_INTEGRATED
-    PECJ_FULL_INTEGRATION      # 需要 PECJ 库已编译
-)
-target_link_libraries(your_target PRIVATE
-    sage_tsdb_pecj_engine
-    IntelliStreamOoOJoin       # PECJ 动态库
-)
-target_include_directories(your_target PRIVATE
-    ${PECJ_DIR}/include        # PECJ 头文件路径
-)
+find_package(sageTSDB CONFIG REQUIRED COMPONENTS compute)
+target_link_libraries(your_target PRIVATE sageTSDB::compute)
 ```
+
+源码构建和打包命令见 `PECJ_COMPUTE_COMPONENT_DELIVERY.md`。
 
 ---
 
@@ -752,7 +746,7 @@ target_include_directories(your_target PRIVATE
 | 结束字段 | `end_us`（微秒） | `end_us`（微秒） |
 | 边界语义 | 左闭右开 `[start, end)` | 左闭右闭 `[start, end]` |
 
-调用 `executeWindowJoin()` 时传入 `compute::TimeRange`，引擎直接将其传给 `db->query()`，无需手动转换。
+调用 `executeWindowJoin()` 时传入 `compute::TimeRange`；引擎内部将结束值减 1 后再调用闭区间 `db->query()`，调用方无需手动转换。
 
 ### ② `table_manager_` 构造函数要求非空但从未调用
 
@@ -762,13 +756,10 @@ target_include_directories(your_target PRIVATE
 
 `writeResults()` 当前是空实现（`src/compute/pecj_compute_engine.cpp` 第 550–576 行为全注释的 TODO）。连接结果**不会**被自动写入 `result_table`，只通过 `ComputeStatus.join_count` 和 `onWindowCompleted` 回调返回。如需持久化结果，在回调中自行写入企业DB。
 
-### ④ MSWJ 算子必须通过工厂函数创建
+### ④ 不支持绕过组件直接构造 MSWJ
 
-引擎内部已处理此问题，对外透明。若调用方需要在引擎之外直接构造 `OoOJoin::MSWJOperator`，必须使用：
+`PECJComputeEngine` 已通过内部工厂正确创建 MSWJ。`sage_tsdb/detail` 和 PECJ 原生头文件不属于本组件的公共 ABI，调用方不要绕过引擎直接构造 `OoOJoin::MSWJOperator`。
 
-```cpp
-// 文件：include/sage_tsdb/detail/pecj_mswj_factory.h
-auto op = sage_tsdb::detail::createMSWJOperator(cfg);
-```
+### ⑤ `ComputeStateManager` 的删除语义尚未完成
 
-直接默认构造后调用 `setConfig()` 会因内部 `streamOperator` 为空指针而 crash。
+`saveState()`、`loadState()`、checkpoint 创建/恢复和序列化接口已编入 `sageTSDB::compute`。`deleteState()`、`deleteCheckpoint()` 当前不写 tombstone；`persistState(compute_name)` 当前触发数据库级 checkpoint，并未按名称局部持久化。

@@ -1,5 +1,7 @@
 cmake_minimum_required(VERSION 3.15)
-project(sageTSDB VERSION 0.1.0 LANGUAGES CXX)
+project(sageTSDB VERSION 0.2.0 LANGUAGES CXX)
+
+include(GNUInstallDirs)
 
 # Set C++ standard (C++20 required for PECJ integration)
 set(CMAKE_CXX_STANDARD 20)
@@ -19,6 +21,9 @@ else()
 endif()
 option(BUILD_SHARED_LIBS "Build shared libraries" ON)
 option(ENABLE_OPENMP "Enable OpenMP support" ON)
+option(BUILD_EXAMPLES "Build examples" ON)
+option(SAGE_TSDB_BUILD_COMPUTE_CLI "Build the PECJ compute component CLI" ON)
+option(SAGE_TSDB_BUILD_PECJ_C_API "Build the stable PECJ C ABI" ON)
 
 # Set build type
 if(NOT CMAKE_BUILD_TYPE)
@@ -65,6 +70,9 @@ option(SAGE_TSDB_ENABLE_PECJ "Enable PECJ integration" OFF)
 option(SAGE_TSDB_ENABLE_SRTFD "Enable SRTFD stateless compute engine" ON)
 option(PECJ_FULL_INTEGRATION "Enable full PECJ integration (requires PECJ library)" OFF)
 set(PECJ_MODE "INTEGRATED" CACHE STRING "PECJ integration mode: PLUGIN or INTEGRATED")
+set(PECJ_DIR "" CACHE PATH "Path to the PECJ source tree")
+set(PECJ_INCLUDE_DIR "" CACHE PATH "Path to the PECJ public headers")
+set(PECJ_LIBRARY "" CACHE FILEPATH "Path to the PECJ library")
 
 # Compute library (stateless compute engines)
 set(SAGE_TSDB_COMPUTE_SOURCES)
@@ -78,6 +86,7 @@ endif()
 if(SAGE_TSDB_ENABLE_PECJ AND PECJ_MODE STREQUAL "INTEGRATED")
     list(APPEND SAGE_TSDB_COMPUTE_SOURCES
         src/compute/pecj_compute_engine.cpp
+        src/compute/compute_state_manager.cpp
         src/compute/window_scheduler.cpp
     )
 endif()
@@ -101,6 +110,12 @@ if(SAGE_TSDB_COMPUTE_SOURCES)
             sage_tsdb_core
     )
 
+    set_target_properties(sage_tsdb_compute PROPERTIES
+        EXPORT_NAME compute
+        INSTALL_RPATH "$ORIGIN"
+    )
+    add_library(sageTSDB::compute ALIAS sage_tsdb_compute)
+
     if(SAGE_TSDB_ENABLE_SRTFD)
         target_compile_definitions(sage_tsdb_compute PUBLIC SAGE_TSDB_ENABLE_SRTFD=1)
         message(STATUS "Building SRTFD Compute Engine (Stateless Mode)")
@@ -112,15 +127,22 @@ if(SAGE_TSDB_ENABLE_PECJ AND PECJ_MODE STREQUAL "INTEGRATED" AND TARGET sage_tsd
     message(STATUS "Building PECJ Compute Engine (Deep Integration Mode)")
     target_compile_definitions(sage_tsdb_compute PUBLIC PECJ_MODE_INTEGRATED=1)
     
-    # If PECJ directory is specified, add PECJ support
-    if(DEFINED PECJ_DIR)
-        get_filename_component(PECJ_DIR_ABS "${PECJ_DIR}" ABSOLUTE BASE_DIR "${CMAKE_CURRENT_SOURCE_DIR}")
-        set(PECJ_INCLUDE_DIR "${PECJ_DIR_ABS}/include")
+    # PECJ_LIBRARY may point to a clean out-of-tree build instead of
+    # PECJ_DIR/build, which is useful when producing a delivery package.
+    if(PECJ_DIR OR PECJ_INCLUDE_DIR)
+        if(PECJ_DIR)
+            get_filename_component(PECJ_DIR_ABS "${PECJ_DIR}" ABSOLUTE BASE_DIR "${CMAKE_CURRENT_SOURCE_DIR}")
+        else()
+            get_filename_component(PECJ_DIR_ABS "${PECJ_INCLUDE_DIR}/.." ABSOLUTE)
+        endif()
+        if(NOT PECJ_INCLUDE_DIR)
+            set(PECJ_INCLUDE_DIR "${PECJ_DIR_ABS}/include")
+        endif()
         set(PECJ_BUILD_DIR "${PECJ_DIR_ABS}/build")
         
         if(EXISTS "${PECJ_INCLUDE_DIR}")
             target_include_directories(sage_tsdb_compute
-                PUBLIC
+                PRIVATE
                     ${PECJ_INCLUDE_DIR}
             )
             
@@ -136,28 +158,34 @@ if(SAGE_TSDB_ENABLE_PECJ AND PECJ_MODE STREQUAL "INTEGRATED" AND TARGET sage_tsd
             find_package(Torch QUIET)
             if(Torch_FOUND)
                 message(STATUS "  Torch found for compute engine: ${TORCH_LIBRARIES}")
-                target_include_directories(sage_tsdb_compute PUBLIC ${TORCH_INCLUDE_DIRS})
-                target_link_libraries(sage_tsdb_compute PUBLIC ${TORCH_LIBRARIES})
-                target_compile_definitions(sage_tsdb_compute PUBLIC TORCH_AVAILABLE=1)
+                target_include_directories(sage_tsdb_compute PRIVATE ${TORCH_INCLUDE_DIRS})
+                target_link_libraries(sage_tsdb_compute PRIVATE ${TORCH_LIBRARIES})
+                target_compile_definitions(sage_tsdb_compute PRIVATE TORCH_AVAILABLE=1)
+            elseif(PECJ_FULL_INTEGRATION)
+                message(FATAL_ERROR "PECJ_FULL_INTEGRATION requires Torch, but Torch was not found")
             endif()
             
             # Find PECJ library
-            find_library(PECJ_LIBRARY
-                NAMES IntelliStreamOoOJoin libIntelliStreamOoOJoin
-                HINTS ${PECJ_BUILD_DIR} ${PECJ_DIR_ABS}/build
-                PATH_SUFFIXES lib lib64 src
-            )
+            if(NOT PECJ_LIBRARY)
+                find_library(PECJ_LIBRARY
+                    NAMES IntelliStreamOoOJoin libIntelliStreamOoOJoin
+                    HINTS ${PECJ_BUILD_DIR} ${PECJ_DIR_ABS}/build
+                    PATH_SUFFIXES lib lib64 src
+                )
+            endif()
             
             if(PECJ_LIBRARY)
                 message(STATUS "  PECJ library found for compute engine: ${PECJ_LIBRARY}")
-                target_link_libraries(sage_tsdb_compute PUBLIC ${PECJ_LIBRARY})
-                target_compile_definitions(sage_tsdb_compute PUBLIC PECJ_LIBRARY_AVAILABLE=1)
+                target_link_libraries(sage_tsdb_compute PRIVATE ${PECJ_LIBRARY})
+                target_compile_definitions(sage_tsdb_compute PRIVATE PECJ_LIBRARY_AVAILABLE=1)
                 
                 # Check if PECJ_FULL_INTEGRATION is requested
                 if(PECJ_FULL_INTEGRATION)
                     message(STATUS "  Enabling PECJ_FULL_INTEGRATION for compute engine")
                     target_compile_definitions(sage_tsdb_compute PUBLIC PECJ_FULL_INTEGRATION=1)
                 endif()
+            elseif(PECJ_FULL_INTEGRATION)
+                message(FATAL_ERROR "PECJ_FULL_INTEGRATION requires PECJ_LIBRARY")
             endif()
         endif()
     endif()
@@ -172,6 +200,16 @@ target_include_directories(sage_tsdb_core
     PRIVATE
         ${PROJECT_SOURCE_DIR}/src
 )
+
+target_compile_definitions(sage_tsdb_core
+    PUBLIC _GLIBCXX_USE_CXX11_ABI=0
+)
+
+set_target_properties(sage_tsdb_core PROPERTIES
+    EXPORT_NAME core
+    INSTALL_RPATH "$ORIGIN"
+)
+add_library(sageTSDB::core ALIAS sage_tsdb_core)
 
 # ---------------------------------------------------------------------------
 # Dameng (达梦) storage backend adapter (skeleton; deliverable D3)
@@ -222,6 +260,12 @@ target_link_libraries(sage_tsdb_algorithms
         sage_tsdb_core
 )
 
+set_target_properties(sage_tsdb_algorithms PROPERTIES
+    EXPORT_NAME algorithms
+    INSTALL_RPATH "$ORIGIN"
+)
+add_library(sageTSDB::algorithms ALIAS sage_tsdb_algorithms)
+
 # Plugins library (optional, if PECJ is available)
 option(BUILD_PLUGINS "Build plugin system" ON)
 
@@ -242,7 +286,7 @@ endif()
 
 if(BUILD_PLUGINS)
     # Check for PECJ
-    if(DEFINED PECJ_DIR)
+    if(PECJ_DIR)
         # Convert to absolute path if relative
         get_filename_component(PECJ_DIR_ABS "${PECJ_DIR}" ABSOLUTE BASE_DIR "${CMAKE_CURRENT_SOURCE_DIR}")
         set(PECJ_INCLUDE_DIR "${PECJ_DIR_ABS}/include")
@@ -360,6 +404,58 @@ target_link_libraries(sage_tsdb
         sage_tsdb_core
         sage_tsdb_algorithms
 )
+set_target_properties(sage_tsdb PROPERTIES EXPORT_NAME sage_tsdb)
+add_library(sageTSDB::sage_tsdb ALIAS sage_tsdb)
+
+# Standalone executable shipped with the PECJ compute component. It provides a
+# deterministic in-memory self-test and can execute a window join over CSV data.
+if(SAGE_TSDB_BUILD_COMPUTE_CLI
+   AND TARGET sage_tsdb_compute
+   AND SAGE_TSDB_ENABLE_PECJ
+   AND PECJ_MODE STREQUAL "INTEGRATED")
+    add_executable(sage_tsdb_pecj tools/pecj_compute_cli.cpp)
+    target_link_libraries(sage_tsdb_pecj PRIVATE sage_tsdb_compute)
+    target_compile_definitions(sage_tsdb_pecj PRIVATE
+        SAGE_TSDB_COMPONENT_VERSION="${PROJECT_VERSION}"
+    )
+    set_target_properties(sage_tsdb_pecj PROPERTIES
+        INSTALL_RPATH "$ORIGIN/../${CMAKE_INSTALL_LIBDIR}"
+    )
+endif()
+
+# Stable C ABI for consumers that must not depend on the libstdc++ ABI. The
+# implementation remains C++, while the public surface contains only C types.
+if(SAGE_TSDB_BUILD_PECJ_C_API
+   AND TARGET sage_tsdb_compute
+   AND SAGE_TSDB_ENABLE_PECJ
+   AND PECJ_MODE STREQUAL "INTEGRATED")
+    add_library(sage_tsdb_pecj_c SHARED src/c_api/pecj_c_api.cpp)
+    target_include_directories(sage_tsdb_pecj_c
+        PUBLIC
+            $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
+            $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
+    )
+    target_link_libraries(sage_tsdb_pecj_c PRIVATE sage_tsdb_compute sage_tsdb_core)
+    target_compile_definitions(sage_tsdb_pecj_c
+        PRIVATE
+            SAGE_TSDB_PECJ_C_BUILDING=1
+            SAGE_TSDB_COMPONENT_VERSION="${PROJECT_VERSION}"
+    )
+    set_target_properties(sage_tsdb_pecj_c PROPERTIES
+        EXPORT_NAME pecj_c
+        CXX_VISIBILITY_PRESET hidden
+        VISIBILITY_INLINES_HIDDEN YES
+        VERSION 1.0.0
+        SOVERSION 1
+        INSTALL_RPATH "$ORIGIN"
+    )
+    if(UNIX AND NOT APPLE)
+        target_link_options(sage_tsdb_pecj_c PRIVATE
+            "LINKER:--version-script=${PROJECT_SOURCE_DIR}/cmake/pecj_c_api.map"
+        )
+    endif()
+    add_library(sageTSDB::pecj_c ALIAS sage_tsdb_pecj_c)
+endif()
 
 # Link OpenMP if available
 if(OpenMP_CXX_FOUND)
@@ -402,24 +498,41 @@ if(DEFINED SKBUILD)
     )
 else()
     # Standalone C++ build mode - standard installation paths
-    install(TARGETS sage_tsdb sage_tsdb_core sage_tsdb_algorithms
+    set(SAGE_TSDB_INSTALL_TARGETS
+        sage_tsdb
+        sage_tsdb_core
+        sage_tsdb_algorithms
+    )
+    if(TARGET sage_tsdb_compute)
+        list(APPEND SAGE_TSDB_INSTALL_TARGETS sage_tsdb_compute)
+    endif()
+    if(TARGET sage_tsdb_pecj_c)
+        list(APPEND SAGE_TSDB_INSTALL_TARGETS sage_tsdb_pecj_c)
+    endif()
+
+    install(TARGETS ${SAGE_TSDB_INSTALL_TARGETS}
         EXPORT sageTSDBTargets
-        LIBRARY DESTINATION lib
-        ARCHIVE DESTINATION lib
-        RUNTIME DESTINATION bin
-        INCLUDES DESTINATION include
+        LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+        ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+        RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+        INCLUDES DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
     )
 
+    if(TARGET sage_tsdb_pecj)
+        install(TARGETS sage_tsdb_pecj
+            RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+        )
+    endif()
     # Export targets for standalone build
     install(EXPORT sageTSDBTargets
         FILE sageTSDBTargets.cmake
         NAMESPACE sageTSDB::
-        DESTINATION lib/cmake/sageTSDB
+        DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/sageTSDB
     )
 
     # Install headers
     install(DIRECTORY include/sage_tsdb
-        DESTINATION include
+        DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
         FILES_MATCHING PATTERN "*.h"
     )
 
@@ -431,16 +544,36 @@ else()
         COMPATIBILITY AnyNewerVersion
     )
 
-    configure_file(cmake/sageTSDBConfig.cmake.in
+    set(SAGE_TSDB_CONFIG_NEEDS_OPENMP ${OpenMP_CXX_FOUND})
+    configure_package_config_file(cmake/sageTSDBConfig.cmake.in
         "${PROJECT_BINARY_DIR}/sageTSDBConfig.cmake"
-        @ONLY
+        INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/sageTSDB
     )
 
     install(FILES
         "${PROJECT_BINARY_DIR}/sageTSDBConfig.cmake"
         "${PROJECT_BINARY_DIR}/sageTSDBConfigVersion.cmake"
-        DESTINATION lib/cmake/sageTSDB
+        DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/sageTSDB
     )
+
+    if(TARGET sage_tsdb_compute)
+        install(FILES
+            docs/compute/PECJ_COMPUTE_LAYER_INTERFACE.md
+            docs/compute/PECJ_COMPUTE_COMPONENT_DELIVERY.md
+            DESTINATION ${CMAKE_INSTALL_DOCDIR}/compute
+        )
+        install(DIRECTORY examples/component_consumer/
+            DESTINATION ${CMAKE_INSTALL_DATADIR}/sageTSDB/component_consumer
+        )
+    endif()
+    if(TARGET sage_tsdb_pecj_c)
+        install(FILES docs/compute/PECJ_C_API.md
+            DESTINATION ${CMAKE_INSTALL_DOCDIR}/compute
+        )
+        install(DIRECTORY examples/c_component_consumer/
+            DESTINATION ${CMAKE_INSTALL_DATADIR}/sageTSDB/c_component_consumer
+        )
+    endif()
 endif()
 
 # Python bindings
@@ -455,7 +588,9 @@ if(BUILD_TESTS)
 endif()
 
 # Examples
-add_subdirectory(examples)
+if(BUILD_EXAMPLES)
+    add_subdirectory(examples)
+endif()
 
 # Print configuration
 message(STATUS "")
@@ -465,9 +600,10 @@ message(STATUS "  C++ standard: ${CMAKE_CXX_STANDARD}")
 message(STATUS "  Build tests: ${BUILD_TESTS}")
 message(STATUS "  Build Python bindings: ${BUILD_PYTHON_BINDINGS}")
 message(STATUS "  Build shared libs: ${BUILD_SHARED_LIBS}")
+message(STATUS "  Build examples: ${BUILD_EXAMPLES}")
 message(STATUS "  Build plugins: ${BUILD_PLUGINS}")
 message(STATUS "  SRTFD compute support: ${SAGE_TSDB_ENABLE_SRTFD}")
-if(DEFINED PECJ_DIR AND EXISTS "${PECJ_DIR}/include")
+if(PECJ_DIR AND EXISTS "${PECJ_DIR}/include")
     message(STATUS "  PECJ support: YES (${PECJ_DIR})")
 elseif(TARGET sage_tsdb_plugins)
     message(STATUS "  PECJ support: STUB (plugin infrastructure only)")
@@ -476,4 +612,3 @@ else()
 endif()
 message(STATUS "  OpenMP support: ${ENABLE_OPENMP}")
 message(STATUS "")
-

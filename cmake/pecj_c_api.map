@@ -1,0 +1,6 @@
+SAGE_TSDB_PECJ_C_1.0 {
+    global:
+        sage_pecj_*;
+    local:
+        *;
+};

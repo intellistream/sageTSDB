@@ -16,6 +16,7 @@
 #include <mutex>
 #include <numeric>
 #include <memory>
+#include <limits>
 
 // sageTSDB core headers - include BEFORE everything else
 #include "sage_tsdb/core/time_series_db.h"
@@ -155,6 +156,8 @@ bool PECJComputeEngine::createPECJOperator() {
         pecj_config->edit("wmTag", config_.watermark_tag);
         pecj_config->edit("watermarkTimeMs", config_.watermark_time_ms);
         pecj_config->edit("latenessMs", config_.lateness_ms);
+        pecj_config->edit("aiMode", config_.ai_mode);
+        pecj_config->edit("ptPrefix", config_.model_prefix);
         
         // Set operator-specific parameters
         if (config_.ima_disable_compensation) {
@@ -260,6 +263,8 @@ ComputeStatus PECJComputeEngine::executeWindowJoin(uint64_t window_id,
             .window_id = window_id
         };
     }
+
+    std::lock_guard<std::mutex> execution_lock(execution_mutex_);
     
     auto start_time = std::chrono::steady_clock::now();
     
@@ -275,8 +280,8 @@ ComputeStatus PECJComputeEngine::executeWindowJoin(uint64_t window_id,
         }
         
         // Step 1: Query data from sageTSDB tables
-        // Explicit conversion: compute::TimeRange → sage_tsdb::TimeRange (different namespaces, same fields)
-        sage_tsdb::TimeRange query_range(time_range.start_us, time_range.end_us);
+        // The core query range is closed, while a compute window is [start, end).
+        sage_tsdb::TimeRange query_range(time_range.start_us, time_range.end_us - 1);
         auto s_data_tsdb = db_->query(config_.stream_s_table, query_range);
         auto r_data_tsdb = db_->query(config_.stream_r_table, query_range);
         
@@ -293,8 +298,8 @@ ComputeStatus PECJComputeEngine::executeWindowJoin(uint64_t window_id,
         // =====================================================================
         
         // Calculate the min timestamp from queried data
-        uint64_t min_timestamp = UINT64_MAX;
-        uint64_t max_timestamp = 0;
+        int64_t min_timestamp = std::numeric_limits<int64_t>::max();
+        int64_t max_timestamp = std::numeric_limits<int64_t>::min();
         
         for (const auto& data : s_data_tsdb) {
             if (data.timestamp < min_timestamp) min_timestamp = data.timestamp;
@@ -306,13 +311,13 @@ ComputeStatus PECJComputeEngine::executeWindowJoin(uint64_t window_id,
         }
         
         // Handle empty data case
-        if (min_timestamp == UINT64_MAX) {
+        if (min_timestamp == std::numeric_limits<int64_t>::max()) {
             min_timestamp = 0;
-            max_timestamp = config_.window_len_us;
+            max_timestamp = static_cast<int64_t>(config_.window_len_us);
         }
         
         // Calculate window length to cover all data with some margin
-        uint64_t actual_data_span = max_timestamp - min_timestamp + 1;
+        uint64_t actual_data_span = static_cast<uint64_t>(max_timestamp - min_timestamp) + 1;
         uint64_t effective_window_len = std::max(config_.window_len_us, actual_data_span + 1000);
         
         // Reconfigure PECJ operator with correct window size
@@ -330,60 +335,48 @@ ComputeStatus PECJComputeEngine::executeWindowJoin(uint64_t window_id,
             return status;
         }
         
-        // Step 2: Feed data to PECJ operator with NORMALIZED eventTime
-        // Use getAQPResult() to get results with prediction compensation (for IMA operator)
-        size_t join_count_before = pecj_operator_->getAQPResult();
-        
-        for (const auto& data : s_data_tsdb) {
-            // Convert TimeSeriesData to PECJ tuple
-            OoOJoin::keyType key = 0;
-            if (data.tags.count("key")) {
-                key = std::stoull(data.tags.at("key"));
+        // Preserve real cross-stream arrival order for the upstream operators.
+        std::vector<std::pair<OoOJoin::TrackTuplePtr, bool>> arrivals;
+        auto append_stream = [&](const auto& records, bool stream_s) {
+            for (const auto& data : records) {
+                const auto key = data.tags.count("key")
+                    ? std::stoull(data.tags.at("key")) : 0;
+                const auto value = data.fields.count("value")
+                    ? static_cast<OoOJoin::valueType>(std::stod(data.fields.at("value"))) : 0;
+                const auto arrival_us = data.fields.count("arrival_time_us")
+                    ? std::stoll(data.fields.at("arrival_time_us")) : data.timestamp;
+                if (arrival_us < data.timestamp) {
+                    throw std::invalid_argument("Arrival time precedes event time");
+                }
+                const auto event = static_cast<OoOJoin::tsType>(data.timestamp - min_timestamp);
+                const auto arrival = static_cast<OoOJoin::tsType>(arrival_us - min_timestamp);
+                arrivals.emplace_back(std::make_shared<OoOJoin::TrackTuple>(key, value, event, arrival), stream_s);
             }
-            
-            OoOJoin::valueType value = 0;
-            if (data.fields.count("value")) {
-                value = static_cast<OoOJoin::valueType>(std::stod(data.fields.at("value")));
-            }
-            
-            // CRITICAL FIX: Normalize eventTime to be within [0, window_len]
-            // eventTime is what PECJ uses to determine if tuple is in window
-            OoOJoin::tsType eventTime = data.timestamp - min_timestamp;  // Normalized to start from 0
-            OoOJoin::tsType arrivalTime = data.timestamp - min_timestamp;  // Also normalized
-            
-            auto tuple = std::make_shared<OoOJoin::TrackTuple>(key, value, eventTime, arrivalTime);
-            pecj_operator_->feedTupleS(tuple);
+        };
+        append_stream(s_data_tsdb, true);
+        append_stream(r_data_tsdb, false);
+        std::stable_sort(arrivals.begin(), arrivals.end(), [](const auto& a, const auto& b) {
+            return a.first->arrivalTime < b.first->arrivalTime;
+        });
+        for (const auto& item : arrivals) {
+            if (item.second) pecj_operator_->feedTupleS(item.first);
+            else pecj_operator_->feedTupleR(item.first);
         }
-        
-        for (const auto& data : r_data_tsdb) {
-            // Convert TimeSeriesData to PECJ tuple
-            OoOJoin::keyType key = 0;
-            if (data.tags.count("key")) {
-                key = std::stoull(data.tags.at("key"));
-            }
-            
-            OoOJoin::valueType value = 0;
-            if (data.fields.count("value")) {
-                value = static_cast<OoOJoin::valueType>(std::stod(data.fields.at("value")));
-            }
-            
-            // CRITICAL FIX: Normalize eventTime to be within [0, window_len]
-            OoOJoin::tsType eventTime = data.timestamp - min_timestamp;  // Normalized to start from 0
-            OoOJoin::tsType arrivalTime = data.timestamp - min_timestamp;  // Also normalized
-            
-            auto tuple = std::make_shared<OoOJoin::TrackTuple>(key, value, eventTime, arrivalTime);
-            pecj_operator_->feedTupleR(tuple);
+
+        // stop() finalizes lazy operators such as IAWJ and does not clear their
+        // result. Read exact/AQP results only after finalization.
+        if (!pecj_operator_->stop()) {
+            status.success = false;
+            status.error = "Failed to stop PECJ operator";
+            return status;
         }
-        
-        // Step 3: Get join results BEFORE stopping (stop() may clear state)
-        // Get both confirmed result and AQP result for comparison
-        size_t confirmed_result = pecj_operator_->getResult();
-        size_t aqp_result = pecj_operator_->getAQPResult();
-        status.join_count = aqp_result - join_count_before;
-        
-        // Step 3.5: Get AQP result if operator supports it
+
+        const size_t confirmed_result = pecj_operator_->getResult();
+        status.join_count = confirmed_result;
+
         PECJOperatorType op_type = stringToOperatorType(config_.operator_type);
         if (operatorSupportsAQP(op_type)) {
+            const size_t aqp_result = pecj_operator_->getAQPResult();
             status.aqp_estimate = static_cast<double>(aqp_result);
             status.used_aqp = true;
             
@@ -393,9 +386,6 @@ ComputeStatus PECJComputeEngine::executeWindowJoin(uint64_t window_id,
                                  / static_cast<double>(confirmed_result);
             }
         }
-        
-        // Step 4: Stop operator after getting results
-        pecj_operator_->stop();
         
         // Step 4: Calculate metrics
         auto end_time = std::chrono::steady_clock::now();

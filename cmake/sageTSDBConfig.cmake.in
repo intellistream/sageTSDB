@@ -1,5 +1,53 @@
 @PACKAGE_INIT@
 
+include(CMakeFindDependencyMacro)
+
+set(_sageTSDB_needs_cxx FALSE)
+if(NOT sageTSDB_FIND_COMPONENTS)
+    set(_sageTSDB_needs_cxx TRUE)
+else()
+    foreach(_sageTSDB_component IN LISTS sageTSDB_FIND_COMPONENTS)
+        if(_sageTSDB_component STREQUAL "core" OR
+           _sageTSDB_component STREQUAL "algorithms" OR
+           _sageTSDB_component STREQUAL "compute" OR
+           _sageTSDB_component STREQUAL "sage_tsdb")
+            set(_sageTSDB_needs_cxx TRUE)
+        endif()
+    endforeach()
+endif()
+
+if(@SAGE_TSDB_CONFIG_NEEDS_OPENMP@ AND _sageTSDB_needs_cxx)
+    find_dependency(OpenMP COMPONENTS CXX)
+endif()
+
 include("${CMAKE_CURRENT_LIST_DIR}/sageTSDBTargets.cmake")
 
+if(TARGET sageTSDB::compute AND UNIX AND NOT APPLE)
+    set_property(TARGET sageTSDB::compute APPEND PROPERTY
+        INTERFACE_LINK_OPTIONS
+        "LINKER:-rpath-link,${PACKAGE_PREFIX_DIR}/@CMAKE_INSTALL_LIBDIR@"
+    )
+endif()
+
+set(sageTSDB_core_FOUND FALSE)
+set(sageTSDB_algorithms_FOUND FALSE)
+set(sageTSDB_compute_FOUND FALSE)
+set(sageTSDB_pecj_c_FOUND FALSE)
+
+if(TARGET sageTSDB::core)
+    set(sageTSDB_core_FOUND TRUE)
+endif()
+if(TARGET sageTSDB::algorithms)
+    set(sageTSDB_algorithms_FOUND TRUE)
+endif()
+if(TARGET sageTSDB::compute)
+    set(sageTSDB_compute_FOUND TRUE)
+endif()
+if(TARGET sageTSDB::pecj_c)
+    set(sageTSDB_pecj_c_FOUND TRUE)
+endif()
+
 check_required_components(sageTSDB)
+
+unset(_sageTSDB_component)
+unset(_sageTSDB_needs_cxx)

@@ -10,6 +10,9 @@
 #include "sage_tsdb/compute/window_scheduler.h"
 #include "sage_tsdb/compute/pecj_compute_engine.h"
 #include "sage_tsdb/core/resource_manager.h"
+#include <atomic>
+#include <chrono>
+#include <thread>
 
 using namespace sage_tsdb;
 using namespace sage_tsdb::compute;
@@ -109,6 +112,33 @@ TEST_F(WindowSchedulerRuntimeTest, ManualScheduleCreatesPendingWindow) {
     EXPECT_EQ(window.time_range.start_us, 1'000'000);
     EXPECT_EQ(window.time_range.end_us, 2'000'000);
     EXPECT_TRUE(window.is_ready);
+}
+
+TEST_F(WindowSchedulerRuntimeTest, StartedSchedulerProcessesAndWaitsForWindow) {
+    WindowSchedulerConfig config;
+    config.trigger_policy = TriggerPolicy::Manual;
+    config.trigger_interval_us = 1'000;
+    config.max_concurrent_windows = 1;
+
+    WindowScheduler scheduler(config, &compute_engine_, table_manager_, resource_handle_.get());
+    std::atomic<bool> failure_called{false};
+    scheduler.onWindowFailed([&failure_called](const WindowInfo&, const ComputeStatus&) {
+        failure_called.store(true);
+    });
+
+    ASSERT_TRUE(scheduler.start());
+    ASSERT_TRUE(scheduler.scheduleWindow(43, TimeRange(1'000'000, 2'000'000)));
+
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    while (!failure_called.load() && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    scheduler.stop(true);
+
+    EXPECT_TRUE(failure_called.load());
+    EXPECT_FALSE(scheduler.isRunning());
+    EXPECT_TRUE(scheduler.getWindowInfo(43).is_completed);
+    EXPECT_EQ(scheduler.getActiveWindowCount(), 0U);
 }
 
 TEST_F(WindowSchedulerRuntimeTest, WatermarkMonotonicity) {
