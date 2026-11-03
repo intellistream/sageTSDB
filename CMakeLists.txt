@@ -599,6 +599,18 @@ else()
         install(DIRECTORY examples/component_consumer/
             DESTINATION ${CMAKE_INSTALL_DATADIR}/sageTSDB/component_consumer
         )
+        install(DIRECTORY examples/task_demos/
+            DESTINATION ${CMAKE_INSTALL_DATADIR}/sageTSDB/task_demos
+            FILES_MATCHING PATTERN "*.py" PATTERN "*.md"
+            PATTERN "__pycache__" EXCLUDE
+        )
+        install(FILES docs/examples/TASK_DEMOS.md
+            DESTINATION ${CMAKE_INSTALL_DOCDIR}/examples
+        )
+        install(FILES docs/TASK.md DESTINATION ${CMAKE_INSTALL_DOCDIR})
+        install(FILES docs/reports/TASK_PACKAGE_AUDIT_2026-11-03.md
+            DESTINATION ${CMAKE_INSTALL_DOCDIR}/reports
+        )
     endif()
     if(TARGET sage_tsdb_pecj_c)
         install(FILES docs/compute/PECJ_C_API.md
