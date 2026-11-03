@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+set -euo pipefail
+PREFIX="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+export PYTHONPATH="${PREFIX}/share/sageTSDB/python:${PYTHONPATH:-}"
+exec "${PYTHON:-python3}" -m sage_tsdb.intelligence.cli "$@"

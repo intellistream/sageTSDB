@@ -2,6 +2,7 @@
 #include "sage_tsdb/compute/srtfd_compute_engine.h"
 #include "sage_tsdb/core/time_series_db.h"
 #include <memory>
+#include <cstdlib>
 #include <vector>
 
 using namespace sage_tsdb;
@@ -61,6 +62,50 @@ TEST_F(SRTFDComputeEngineTest, UnsupportedBackendFailsFast) {
 
     EXPECT_FALSE(engine.initialize(config, db_.get(), nullptr));
 }
+
+TEST_F(SRTFDComputeEngineTest, UnknownBackendDoesNotSilentlyUseStatistics) {
+    SRTFDComputeEngine engine;
+    auto config = createConfig();
+    config.backend = "unknown-neural-backend";
+    EXPECT_FALSE(engine.initialize(config, db_.get(), nullptr));
+}
+
+#ifdef SAGE_TSDB_SRTFD_TORCH
+TEST_F(SRTFDComputeEngineTest, TrainedTorchScriptDiagnosesAndPersists) {
+    const auto* path = std::getenv("SAGE_SRTFD_TEST_MODEL");
+    if (!path) GTEST_SKIP() << "Set SAGE_SRTFD_TEST_MODEL to the trained 52x22 TEP classifier";
+    auto config = createConfig();
+    config.backend = "torchscript";
+    config.model_path = path;
+    config.input_dim = 52;
+    config.num_classes = 22;
+    insertSample(1000, std::vector<double>(52, 0.0));
+    insertSample(2000, {1.0, 2.0});
+    SRTFDComputeEngine engine;
+    ASSERT_TRUE(engine.initialize(config, db_.get(), nullptr));
+    auto status = engine.executeWindowDiagnosis(99, TimeRange(1000, 2000));
+    ASSERT_TRUE(status.success) << status.error;
+    EXPECT_EQ(status.result_count, 1);
+    EXPECT_EQ(status.invalid_count, 1);
+    const auto results = db_->query(config.result_table, TimeRange(1000, 2000));
+    ASSERT_EQ(results.size(), 1);
+    EXPECT_EQ(results[0].tags.at("backend"), "torchscript");
+    const auto confidence = std::stod(results[0].fields.at("confidence"));
+    EXPECT_GT(confidence, 0.0);
+    EXPECT_LE(confidence, 1.0);
+}
+
+TEST_F(SRTFDComputeEngineTest, TorchScriptRejectsClassifierShapeMismatch) {
+    const auto* path = std::getenv("SAGE_SRTFD_TEST_MODEL");
+    if (!path) GTEST_SKIP() << "Set SAGE_SRTFD_TEST_MODEL to test model validation";
+    SRTFDComputeEngine engine;
+    auto config = createConfig();
+    config.backend = "torchscript";
+    config.model_path = path;
+    // createConfig uses 3 inputs / 4 classes; the trained fixture has 52 / 22.
+    EXPECT_FALSE(engine.initialize(config, db_.get(), nullptr));
+}
+#endif
 
 TEST_F(SRTFDComputeEngineTest, EmptyWindowSucceeds) {
     SRTFDComputeEngine engine;

@@ -68,6 +68,7 @@ add_library(sage_tsdb_core
 # PECJ Integration Mode selection
 option(SAGE_TSDB_ENABLE_PECJ "Enable PECJ integration" OFF)
 option(SAGE_TSDB_ENABLE_SRTFD "Enable SRTFD stateless compute engine" ON)
+option(SAGE_TSDB_ENABLE_SRTFD_TORCH "Enable trained SRTFD TorchScript inference" OFF)
 option(PECJ_FULL_INTEGRATION "Enable full PECJ integration (requires PECJ library)" OFF)
 set(PECJ_MODE "INTEGRATED" CACHE STRING "PECJ integration mode: PLUGIN or INTEGRATED")
 set(PECJ_DIR "" CACHE PATH "Path to the PECJ source tree")
@@ -120,6 +121,20 @@ if(SAGE_TSDB_COMPUTE_SOURCES)
         target_compile_definitions(sage_tsdb_compute PUBLIC SAGE_TSDB_ENABLE_SRTFD=1)
         message(STATUS "Building SRTFD Compute Engine (Stateless Mode)")
     endif()
+endif()
+
+# Optional neural diagnosis works independently of PECJ.
+if(SAGE_TSDB_ENABLE_SRTFD_TORCH)
+    if(NOT SAGE_TSDB_ENABLE_SRTFD)
+        message(FATAL_ERROR "SRTFD_TORCH requires SAGE_TSDB_ENABLE_SRTFD=ON")
+    endif()
+    find_package(Torch REQUIRED)
+    target_include_directories(sage_tsdb_compute PRIVATE ${TORCH_INCLUDE_DIRS})
+    target_link_libraries(sage_tsdb_compute PRIVATE ${TORCH_LIBRARIES})
+    target_compile_definitions(sage_tsdb_compute PUBLIC SAGE_TSDB_SRTFD_TORCH=1)
+    add_executable(sage_tsdb_srtfd tools/srtfd_compute_cli.cpp)
+    target_link_libraries(sage_tsdb_srtfd PRIVATE sage_tsdb_compute)
+    set_target_properties(sage_tsdb_srtfd PROPERTIES INSTALL_RPATH "$ORIGIN/../lib")
 endif()
 
 # PECJ Compute Engine (Deep Integration)
@@ -523,6 +538,25 @@ else()
             RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
         )
     endif()
+    if(TARGET sage_tsdb_srtfd)
+        install(TARGETS sage_tsdb_srtfd RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+        install(PROGRAMS scripts/demo/sage_tsdb_research DESTINATION ${CMAKE_INSTALL_BINDIR})
+        install(DIRECTORY sage_tsdb/
+            DESTINATION ${CMAKE_INSTALL_DATADIR}/sageTSDB/python/sage_tsdb
+            FILES_MATCHING PATTERN "*.py" PATTERN "__pycache__" EXCLUDE)
+        install(FILES docs/compute/RESEARCH_ENGINE.md
+            DESTINATION ${CMAKE_INSTALL_DOCDIR}/compute)
+        install(FILES docs/licenses/SRTFD-LICENSE
+            DESTINATION ${CMAKE_INSTALL_DATADIR}/licenses)
+        # Package the exact upstream source and saved networks, not copied layer definitions.
+        install(FILES ${PROJECT_SOURCE_DIR}/../SRTFD/models/network.py
+            DESTINATION ${CMAKE_INSTALL_DATADIR}/upstream/SRTFD/models)
+        install(DIRECTORY ${PROJECT_SOURCE_DIR}/../PECJ/benchmark/torchscripts/linearVAE/
+            DESTINATION ${CMAKE_INSTALL_DATADIR}/upstream/PECJ/torchscripts/linearVAE
+            FILES_MATCHING PATTERN "*.pt" PATTERN "*.py"
+            PATTERN "__pycache__" EXCLUDE)
+    endif()
+
     # Export targets for standalone build
     install(EXPORT sageTSDBTargets
         FILE sageTSDBTargets.cmake

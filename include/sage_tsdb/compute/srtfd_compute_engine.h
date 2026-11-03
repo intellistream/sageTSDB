@@ -10,6 +10,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <map>
+#include <memory>
 #include <shared_mutex>
 #include <string>
 #include <vector>
@@ -98,7 +99,7 @@ struct SRTFDMetrics {
 class SRTFDComputeEngine {
 public:
     SRTFDComputeEngine();
-    ~SRTFDComputeEngine() = default;
+    ~SRTFDComputeEngine();
 
     SRTFDComputeEngine(const SRTFDComputeEngine&) = delete;
     SRTFDComputeEngine& operator=(const SRTFDComputeEngine&) = delete;
@@ -119,6 +120,8 @@ public:
     const SRTFDConfig& getConfig() const { return config_; }
 
 private:
+    struct TorchBackend;
+    std::unique_ptr<TorchBackend> torch_backend_;
     TimeSeriesDB* db_;
     core::ResourceHandle* resource_handle_;
     SRTFDConfig config_;
@@ -139,6 +142,10 @@ private:
     SRTFDDiagnosis runStatisticalBackend(const TimeSeriesData& data,
                                          const std::vector<double>& features,
                                          size_t sample_index) const;
+    SRTFDDiagnosis runTorchBackend(const TimeSeriesData& data,
+                                   const std::vector<double>& features,
+                                   size_t sample_index) const;
+    std::vector<SRTFDDiagnosis> runTorchBatch(const std::vector<TimeSeriesData>& data) const;
     bool writeResult(uint64_t window_id, const SRTFDDiagnosis& diagnosis);
     void updateMetrics(const SRTFDStatus& status);
 };

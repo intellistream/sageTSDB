@@ -26,6 +26,7 @@ dependencies = ["numpy>=1.26.0,<2.3.0"]
 
 [project.optional-dependencies]
 full = []
+intelligence = ["torch>=1.13"]
 dev = ["isage-tsdb[full]", "pytest>=7.0.0", "pytest-cov>=4.0.0", "ruff>=0.1.0"]
 
 [project.urls]
