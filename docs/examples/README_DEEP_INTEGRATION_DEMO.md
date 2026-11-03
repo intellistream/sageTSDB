@@ -285,10 +285,10 @@ Depends on:
 
 ## Further Reading
 
-- [PECJ Integration Documentation](../docs/PECJ_DEEP_INTEGRATION_SUMMARY.md)
-- [Table Design](../docs/TABLE_DESIGN_IMPLEMENTATION.md)
-- [Resource Manager Guide](../docs/RESOURCE_MANAGER_GUIDE.md)
-- [PECJ Compute Engine](../docs/PECJ_COMPUTE_ENGINE_IMPLEMENTATION.md)
+- [PECJ Integration Documentation](../DESIGN_DOC_SAGETSDB_PECJ.md)
+- [Table Design](../core/TABLE_DESIGN_IMPLEMENTATION.md)
+- [Resource Manager Guide](../core/RESOURCE_MANAGER_GUIDE.md)
+- [PECJ Compute Engine](../compute/PECJ_COMPUTE_ENGINE_IMPLEMENTATION.md)
 
 ## Summary
 

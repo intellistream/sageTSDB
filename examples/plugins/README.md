@@ -105,7 +105,7 @@ manager.configurePlugin("MyPlugin", config);
 ```bash
 # 编译插件
 cd build
-cmake .. -DSAGE_TSDB_BUILD_PLUGINS=ON
+cmake .. -DBUILD_PLUGINS=ON
 make
 
 # 运行测试
@@ -118,8 +118,8 @@ cd tests
 
 ## 📚 相关示例
 
-- [PECJ 计算引擎插件](../../src/plugins/pecj_plugin.cpp)
-- [故障检测分析插件](../../src/plugins/fault_detection_plugin.cpp)
+- [PECJ 计算引擎插件](../../src/plugins/adapters/pecj_adapter.cpp)
+- [故障检测分析插件](../../src/plugins/adapters/fault_detection_adapter.cpp)
 - [插件单元测试](../../tests/test_pecj_plugin.cpp)
 
 ---

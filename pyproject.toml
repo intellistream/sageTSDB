@@ -68,3 +68,22 @@ testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
+# Keep all pytest settings here so local runs and CI use the same configuration.
+addopts = [
+    "-v", "--strict-markers", "--tb=short", "--disable-warnings",
+    "--cov=sage_tsdb", "--cov-report=term-missing", "--cov-report=html:htmlcov",
+]
+log_cli = true
+log_cli_level = "INFO"
+log_file = "pytest.log"
+log_file_level = "DEBUG"
+markers = [
+    "unit: Unit tests",
+    "integration: Integration tests",
+    "slow: Slow tests (use -m 'not slow' to skip)",
+    "gpu: Tests requiring GPU",
+    "cpp: Tests for C++ bindings",
+]
+norecursedirs = [
+    ".git", ".tox", "dist", "build*", "*.egg", "vendors", "third_party",
+]

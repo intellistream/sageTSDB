@@ -375,9 +375,9 @@ done
 
 ## 相关文档
 
-- [PECJ Integration Guide](../docs/PECJ_DEEP_INTEGRATION_SUMMARY.md)
-- [Resource Manager Guide](../docs/RESOURCE_MANAGER_GUIDE.md)
-- [Performance Tuning](../docs/PERFORMANCE_TUNING.md)
+- [PECJ Integration Guide](../DESIGN_DOC_SAGETSDB_PECJ.md)
+- [Resource Manager Guide](../core/RESOURCE_MANAGER_GUIDE.md)
+- [Performance Tuning](../compute/PECJ_BENCHMARK_README.md)
 
 ## 联系与反馈
 

@@ -36,9 +36,9 @@ ImportError: /lib/x86_64-linux-gnu/libc.so.6: version `GLIBC_2.38' not found
 1. **更新版本号**: 0.1.4 → 0.1.5
 2. **配置 manylinux 支持**: 添加 cibuildwheel 配置
 3. **创建构建脚本**: 
-   - `scripts/build_native_wheel.sh` - 本地构建
-   - `scripts/build_manylinux_wheel.sh` - Docker manylinux 构建
-   - `scripts/upload_to_pypi.sh` - PyPI 上传
+   - `scripts/build/build_native_wheel.sh` - 本地构建
+   - `scripts/build/build_manylinux_wheel.sh` - Docker manylinux 构建
+   - `scripts/release/upload_to_pypi.sh` - PyPI 上传
 4. **GitHub Actions**: `.github/workflows/build-wheels.yml` (CI/CD)
 
 ## 构建流程
@@ -48,13 +48,13 @@ ImportError: /lib/x86_64-linux-gnu/libc.so.6: version `GLIBC_2.38' not found
 适用于在 Ubuntu 22.04+ 上构建，兼容 GLIBC 2.35+：
 
 ```bash
-cd /home/shuhao/sageTSDB
+cd /path/to/sageTSDB
 
 # 1. 清理旧构建
 rm -rf build dist *.egg-info
 
 # 2. 构建 wheel
-./scripts/build_native_wheel.sh
+./scripts/build/build_native_wheel.sh
 
 # 输出: dist/isage_tsdb-0.1.5-py310-none-linux_x86_64.whl
 ```
@@ -71,13 +71,13 @@ rm -rf build dist *.egg-info
 使用 Docker 构建兼容 GLIBC 2.17+ 的 wheel：
 
 ```bash
-cd /home/shuhao/sageTSDB
+cd /path/to/sageTSDB
 
 # 1. 确保 Docker 已安装并运行
 docker --version
 
 # 2. 使用 manylinux 镜像构建
-./scripts/build_manylinux_wheel.sh
+./scripts/build/build_manylinux_wheel.sh
 
 # 输出: dist/isage_tsdb-0.1.5-cp310-cp310-manylinux2014_x86_64.whl
 ```
@@ -112,13 +112,13 @@ git push origin v0.1.5
 ### 使用 sage-pypi-publisher
 
 ```bash
-cd /home/shuhao/sageTSDB
+cd /path/to/sageTSDB
 
 # 1. 确认 wheel 存在
 ls -lh dist/
 
 # 2. 交互式上传
-./scripts/upload_to_pypi.sh
+./scripts/release/upload_to_pypi.sh
 
 # 按提示选择：
 #   1) TestPyPI - 测试环境
@@ -303,8 +303,8 @@ sageTSDB/
 ### 开发迭代
 
 1. 本地修改代码
-2. 运行测试: `./scripts/build/build_and_test.sh`
-3. 本地构建: `./scripts/build_native_wheel.sh`
+2. 运行测试: `./scripts/build/build.sh --test`
+3. 本地构建: `./scripts/build/build_native_wheel.sh`
 4. 本地测试安装
 
 ### 发布版本
@@ -313,7 +313,7 @@ sageTSDB/
 2. 提交更改: `git commit -am "Bump version to 0.1.X"`
 3. 创建 tag: `git tag v0.1.X && git push origin v0.1.X`
 4. GitHub Actions 自动构建和发布
-5. 或手动: `./scripts/build_manylinux_wheel.sh && ./scripts/upload_to_pypi.sh`
+5. 或手动: `./scripts/build/build_manylinux_wheel.sh && ./scripts/release/upload_to_pypi.sh`
 
 ## 相关资源
 

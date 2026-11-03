@@ -1,84 +1,32 @@
-# 构建脚本
+# 构建和打包
 
-本目录包含 sageTSDB 项目的构建相关脚本。
+从仓库根目录运行。C++ 构建统一使用 `build.sh`，原 `build_and_test.sh` 和
+`build_plugins.sh` 的功能分别合入 `--test` 和 `--plugins`。
 
-## 📚 脚本列表
-
-### 1. build.sh
-**功能**: 主构建脚本，编译所有示例程序
-
-**用法**:
 ```bash
-./scripts/build/build.sh
-
-# 或从项目根目录
-./scripts/build/build.sh --test    # 构建并运行测试
-./scripts/build/build.sh --clean   # 清理后重新构建
+bash scripts/build/build.sh --test
+bash scripts/build/build.sh --plugins --test
+bash scripts/build/build.sh --pecj-dir /path/to/PECJ --test
+bash scripts/build/build.sh --python --install
+bash scripts/build/build.sh --help
 ```
 
-**生成的可执行文件**:
-- `build/examples/basic/*` - 基础示例
-- `build/examples/integration/*` - PECJ 集成示例
-- `build/examples/benchmarks/*` - 性能测试
-- `build/examples/plugins/*` - 插件示例
+默认构建 C++ 库、示例和测试，不启用 Python 绑定或真实 PECJ。
+`--python` 使用现有 Python 环境中的 pybind11；`--pecj-dir` 需要已构建的 PECJ
+和兼容的 LibTorch。额外 CMake 选项放在 `--` 后，例如：
 
----
-
-### 2. build_and_test.sh
-**功能**: 构建项目并运行快速验证测试
-
-**用法**:
 ```bash
-./scripts/build/build_and_test.sh
+bash scripts/build/build.sh --build-dir build/debug --test -- -DCMAKE_BUILD_TYPE=Debug
 ```
 
-**测试内容**:
-- ✅ 编译所有示例程序
-- ✅ 运行快速功能测试
-- ✅ 验证 PECJ 集成
-- ✅ 生成测试报告
+`--clean` 清理当前构建目标，`--install` 安装到构建目录的 `install/`。
 
----
+| 脚本 | 产物 / 用途 | 详细说明 |
+| --- | --- | --- |
+| `build_native_wheel.sh` | 当前平台的 Python wheel；保留已有组件包 | [wheel 构建](../../docs/WHEEL_BUILD_AND_PYPI_PUBLISH.md) |
+| `build_manylinux_wheel.sh` | Docker manylinux wheel | [wheel 构建](../../docs/WHEEL_BUILD_AND_PYPI_PUBLISH.md) |
+| `package_pecj_compute_component.sh` | PECJ C/C++ 库、CLI、运行库和消费者验证 | [组件交付](../../docs/compute/PECJ_COMPUTE_COMPONENT_DELIVERY.md) |
+| `package_research_component.sh` | 复用原 PECJ/SRTFD 网络的 upstream 组件 | [原网络接入](../../docs/compute/RESEARCH_ENGINE.md) |
+| `package_task_demos.sh` | 无需重新编译的 Python 示例补充包 | [课题示例](../../examples/task_demos/README.md) |
 
-### 3. build_plugins.sh
-**功能**: 构建插件系统和相关示例
-
-**用法**:
-```bash
-./scripts/build/build_plugins.sh
-```
-
-**环境变量**:
-- `PECJ_DIR`: PECJ 库路径（可选，会自动检测）
-
----
-
-## 🎯 使用场景
-
-### 场景 1: 首次构建
-```bash
-./build.sh
-```
-
-### 场景 2: 开发测试
-```bash
-./build_and_test.sh
-```
-
-### 场景 3: 插件开发
-```bash
-./build_plugins.sh
-```
-
-### 场景 4: 清理重建
-```bash
-./build.sh --clean
-```
-
----
-
-## 📖 相关文档
-
-- [项目构建指南](../../SETUP.md)
-- [示例程序目录](../../examples/)
-- [CMake 配置](../../CMakeLists.txt)
+上传 wheel 使用 `bash scripts/release/upload_to_pypi.sh`，构建过程本身不发布。

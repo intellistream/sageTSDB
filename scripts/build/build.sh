@@ -1,61 +1,79 @@
-#!/bin/bash
-# Build script for sageTSDB
+#!/usr/bin/env bash
+# Shared entrypoint for standalone, plugin and PECJ builds.
+set -euo pipefail
 
-set -e
-
-# Colors for output
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-NC='\033[0m' # No Color
-
-echo -e "${GREEN}Building sageTSDB...${NC}"
-
-# 确定项目根目录和构建目录
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
-
-# 使用项目根目录下的 build/ 目录
 BUILD_DIR="${PROJECT_ROOT}/build"
-echo -e "${YELLOW}使用构建目录: ${BUILD_DIR}${NC}"
+PECJ_SOURCE="${PECJ_DIR:-}"
+JOBS="$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 2)"
+RUN_TESTS=OFF
+ENABLE_PLUGINS=OFF
+ENABLE_PECJ=OFF
+ENABLE_PYTHON=OFF
+CLEAN=OFF
+INSTALL=OFF
+CMAKE_ARGS=()
 
-# Create build directory
-if [ ! -d "$BUILD_DIR" ]; then
-    mkdir -p "$BUILD_DIR"
+usage() {
+    cat <<'USAGE'
+Usage: scripts/build/build.sh [options] [-- CMAKE_OPTIONS...]
+  --test              Build and run CTest
+  --plugins           Build plugin adapters (stub unless PECJ is enabled)
+  --pecj              Enable full PECJ integration; requires PECJ_DIR
+  --pecj-dir DIR      Enable full PECJ integration using DIR
+  --python            Build Python bindings using the current environment
+  --build-dir DIR     Build directory (default: <repository>/build)
+  --jobs N            Parallel build jobs
+  --clean             Clean existing build targets before rebuilding
+  --install           Install into <build-dir>/install
+  --skip-test         Build without running CTest
+  --help              Show this help
+USAGE
+}
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --test) RUN_TESTS=ON; shift ;;
+        --plugins) ENABLE_PLUGINS=ON; shift ;;
+        --pecj) ENABLE_PECJ=ON; shift ;;
+        --pecj-dir) PECJ_SOURCE="$2"; ENABLE_PECJ=ON; shift 2 ;;
+        --python) ENABLE_PYTHON=ON; shift ;;
+        --build-dir) BUILD_DIR="$2"; shift 2 ;;
+        --jobs) JOBS="$2"; shift 2 ;;
+        --clean) CLEAN=ON; shift ;;
+        --install) INSTALL=ON; shift ;;
+        --skip-test) RUN_TESTS=OFF; shift ;;
+        --help|-h) usage; exit 0 ;;
+        --) shift; CMAKE_ARGS=("$@"); break ;;
+        *) echo "Unknown option: $1" >&2; usage >&2; exit 64 ;;
+    esac
+done
+
+if [[ "${ENABLE_PECJ}" == ON && ! -d "${PECJ_SOURCE}" ]]; then
+    echo "Set PECJ_DIR or pass --pecj-dir to an existing PECJ checkout." >&2
+    exit 66
 fi
-
-cd "$PROJECT_ROOT"
-
-# Configure
-echo -e "${YELLOW}Configuring CMake...${NC}"
-cmake -B "$BUILD_DIR" -S . \
+if [[ -n "${PECJ_SOURCE}" && -d "${PECJ_SOURCE}" ]]; then
+    PECJ_SOURCE="$(cd "${PECJ_SOURCE}" && pwd)"
+fi
+mkdir -p "${BUILD_DIR}"
+BUILD_DIR="$(cd "${BUILD_DIR}" && pwd)"
+if [[ "${CLEAN}" == ON && -f "${BUILD_DIR}/CMakeCache.txt" ]]; then
+    cmake --build "${BUILD_DIR}" --target clean
+fi
+cmake -S "${PROJECT_ROOT}" -B "${BUILD_DIR}" \
     -DCMAKE_BUILD_TYPE=Release \
-    -DCMAKE_INSTALL_PREFIX="${BUILD_DIR}/install" \
-    -DBUILD_TESTS=ON \
-    -DBUILD_PYTHON_BINDINGS=ON \
-    -DENABLE_OPENMP=ON
-
-# Build
-echo -e "${YELLOW}Building...${NC}"
-cmake --build "$BUILD_DIR" -j$(nproc)
-
-# Install to local install directory
-echo -e "${YELLOW}Installing to local directory...${NC}"
-cmake --build "$BUILD_DIR" --target install
-
-# Run tests
-if [ "$1" == "--test" ]; then
-    echo -e "${YELLOW}Running tests...${NC}"
-    cd "$BUILD_DIR"
-    ctest --output-on-failure
-    cd "$SCRIPT_DIR"
+    -DBUILD_TESTS=ON -DBUILD_EXAMPLES=ON \
+    -DBUILD_PYTHON_BINDINGS="${ENABLE_PYTHON}" \
+    -DBUILD_PLUGINS="${ENABLE_PLUGINS}" \
+    -DSAGE_TSDB_ENABLE_PECJ="${ENABLE_PECJ}" \
+    -DPECJ_FULL_INTEGRATION="${ENABLE_PECJ}" -DPECJ_MODE=INTEGRATED \
+    -DPECJ_DIR="${PECJ_SOURCE}" "${CMAKE_ARGS[@]}"
+cmake --build "${BUILD_DIR}" --parallel "${JOBS}"
+if [[ "${RUN_TESTS}" == ON ]]; then
+    ctest --test-dir "${BUILD_DIR}" --output-on-failure
 fi
-
-echo -e "${GREEN}Build completed successfully!${NC}"
-echo -e "${GREEN}Libraries installed to: ${BUILD_DIR}/install/lib${NC}"
-
-if [ "$1" == "--install" ]; then
-    echo -e "${YELLOW}Installing...${NC}"
-    sudo make install
-    echo -e "${GREEN}Installation completed!${NC}"
+if [[ "${INSTALL}" == ON ]]; then
+    cmake --install "${BUILD_DIR}" --prefix "${BUILD_DIR}/install"
 fi

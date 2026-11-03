@@ -1,127 +1,30 @@
-# sageTSDB 文档索引
+# sageTSDB 文档
 
-本目录包含 sageTSDB 时序数据库的完整技术文档，按模块分类组织。
+文档按模块维护，示例运行方法放在 `examples/`，构建命令放在 `scripts/`。
 
-## 📖 主文档
+| 入口 | 内容 |
+| --- | --- |
+| [快速开始](../QUICKSTART.md) | Python、C++、PECJ 与 SRTFD 的构建和运行 |
+| [总体设计](DESIGN_DOC_SAGETSDB_PECJ.md) | 存储、计算、资源管理与 Python 层 |
+| [架构边界](adr/0001-boundary-and-mode-policy.md) | 模块职责、模式与兼容策略 |
+| [存储模块](core/README.md) | LSM Tree、持久化、表与资源管理 |
+| [计算模块](compute/README.md) | PECJ / SRTFD、C API 与组件交付 |
+| [算法模块](algorithms/README.md) | 流 Join 与窗口聚合 |
+| [插件系统](plugins/README.md) | 插件模式与开发接口 |
+| [工具模块](utils/README.md) | 配置、日志与数据加载 |
+| [示例索引](examples/README.md) | 深度集成、乱序和课题示例 |
+| [存储后端契约](STORAGE_BACKEND_CONTRACT.md) | 达梦接入边界与一致性约束 |
+| [企业数据库集成计划](EXECUTION_PLAN_ENTERPRISE_DB_INTEGRATION.md) | 分工、联调与后续工作 |
+| [wheel 构建与发布](WHEEL_BUILD_AND_PYPI_PUBLISH.md) | Python 包构建和发布流程 |
 
-**[adr/0001-boundary-and-mode-policy.md](./adr/0001-boundary-and-mode-policy.md)**
+课题要求见 [TASK.md](TASK.md)，可运行能力与待完成项见
+[课题示例对照](examples/TASK_DEMOS.md)。
+[2026-11-03 交付包核查](reports/TASK_PACKAGE_AUDIT_2026-11-03.md)
+是指定压缩包的历史核查记录，报告中的哈希、数值和包路径不会随源码更新。
 
-- Phase 1 边界职责、模式边界与去兼容化策略
-- in-scope / out-of-scope / forbidden patterns
+目录约定：
 
-**[DESIGN_DOC_SAGETSDB_PECJ.md](./DESIGN_DOC_SAGETSDB_PECJ.md)**
-
-- sageTSDB 当前代码库的总体设计文档
-- core、algorithms、compute、plugins、Python 绑定和构建目标
-- 数据流、资源管理、模式边界和后续 roadmap
-- **推荐首先阅读此文档以了解整体架构**
-
-## 📂 模块文档
-
-文档已按照 `src/` 目录结构重新组织，方便查找和维护。
-
-### 🔧 核心模块 (core/)
-
-**[core/README.md](./core/README.md)** - 核心模块总览
-
-- **[core/LSM_TREE_IMPLEMENTATION.md](./core/LSM_TREE_IMPLEMENTATION.md)**
-  - LSM Tree 存储引擎实现
-  - MemTable、SSTable、WAL 机制
-
-- **[core/PERSISTENCE.md](./core/PERSISTENCE.md)**
-  - 数据持久化功能指南
-  - 保存/加载、检查点、增量写入
-
-- **[core/TABLE_DESIGN_IMPLEMENTATION.md](./core/TABLE_DESIGN_IMPLEMENTATION.md)**
-  - StreamTable 和 JoinResultTable 实现
-  - TableManager 多表管理
-
-- **[core/RESOURCE_MANAGER_GUIDE.md](./core/RESOURCE_MANAGER_GUIDE.md)**
-  - 资源管理器使用指南
-  - 线程池和内存管理
-
-### ⚙️ 计算引擎 (compute/)
-
-**[compute/README.md](./compute/README.md)** - 计算引擎总览
-
-- **[compute/PECJ_COMPUTE_ENGINE_IMPLEMENTATION.md](./compute/PECJ_COMPUTE_ENGINE_IMPLEMENTATION.md)**
-  - PECJComputeEngine 实现详解
-  - 配置和性能优化
-
-- **[compute/PECJ_OPERATORS_INTEGRATION.md](./compute/PECJ_OPERATORS_INTEGRATION.md)**
-  - PECJ 算子集成（IAWJ, MeanAQP, IMA, MSWJ 等）
-  - 算子特性和使用场景
-
-- **[compute/PECJ_BENCHMARK_README.md](./compute/PECJ_BENCHMARK_README.md)**
-  - 融合模式 vs 插件模式性能对比
-  - 基准测试指南
-
-- **[compute/SRTFD_STATELESS_OPERATOR_DESIGN.md](./compute/SRTFD_STATELESS_OPERATOR_DESIGN.md)**
-  - SRTFD 无状态算子接入设计
-  - 与 compute 层和表 API 的集成关系
-
-### 🔌 插件系统 (plugins/)
-
-**[plugins/README.md](./plugins/README.md)** - 插件系统总览
-- 插件模式 vs 融合模式
-- 插件开发指南
-
-### 🧮 算法模块 (algorithms/)
-
-**[algorithms/README.md](./algorithms/README.md)** - 算法模块总览
-- 流式 Join
-- 窗口聚合
-- 算法扩展指南
-
-### 🛠️ 工具模块 (utils/)
-
-**[utils/README.md](./utils/README.md)** - 工具模块总览
-- 配置管理
-- 日志系统
-- 性能监控
-
-## 🚀 快速导航
-
-### 新手入门
-1. 阅读 [DESIGN_DOC_SAGETSDB_PECJ.md](./DESIGN_DOC_SAGETSDB_PECJ.md) 了解架构
-2. 查看 [core/PERSISTENCE.md](./core/PERSISTENCE.md) 学习基本使用
-3. 运行 `examples/` 目录中的示例程序
-
-### 开发者指南
-1. [DESIGN_DOC_SAGETSDB_PECJ.md](./DESIGN_DOC_SAGETSDB_PECJ.md) - 理解整体设计
-2. 根据需要查看对应模块的文档
-3. 参考 `tests/` 目录中的单元测试
-
-### 性能优化
-1. [compute/PECJ_BENCHMARK_README.md](./compute/PECJ_BENCHMARK_README.md) - 性能对比
-2. [core/RESOURCE_MANAGER_GUIDE.md](./core/RESOURCE_MANAGER_GUIDE.md) - 资源调优
-3. [compute/PECJ_COMPUTE_ENGINE_IMPLEMENTATION.md](./compute/PECJ_COMPUTE_ENGINE_IMPLEMENTATION.md) - PECJ 计算优化
-
-## 📝 文档组织原则
-
-- 按照 `src/` 源代码目录结构组织文档
-- 每个模块目录包含 `README.md` 作为总览
-- 详细文档放在对应模块目录下
-- 主设计文档 `DESIGN_DOC_SAGETSDB_PECJ.md` 保留在根目录
-
-## 🔗 相关资源
-
-- **示例代码**：`../examples/` - 各种使用示例
-- **单元测试**：`../tests/` - 完整的测试用例
-- **构建脚本**：`../scripts/` - 编译和测试脚本
-- **主 README**：`../README.md` - 项目总览
-
-### 故障排除
-- 性能问题 → `RESOURCE_MANAGER_GUIDE.md`
-- 存储问题 → `LSM_TREE_IMPLEMENTATION.md` + `PERSISTENCE.md`
-- 集成问题 → `DESIGN_DOC_SAGETSDB_PECJ.md` + `adr/0001-boundary-and-mode-policy.md`
-
-## 其他资源
-
-- **测试用例**: `tests/` 目录包含完整的单元测试，可作为 API 使用参考
-- **示例代码**: `examples/` 目录包含各种使用场景的示例
-- **API 文档**: 使用 Doxygen 生成完整的 API 文档（运行 `doxygen Doxyfile`）
-
-## 文档贡献
-
-如果您发现文档有误或需要补充，欢迎提交 Pull Request 或 Issue。
+- `docs/` 保存维护中的设计、接口和操作说明；日期明确的核查证据放在 `reports/`。
+- `include/` 与 `src/` 保存接口和实现，不再保留过时的占位说明或备用构建入口。
+- `build/`、`dist/`、`examples/outputs/`、`results/` 是本地产物目录，不纳入 Git。
+- 修改演示应编辑 `examples/task_demos/`；`dist/` 内的同名文件是打包副本，更新需重新打包。

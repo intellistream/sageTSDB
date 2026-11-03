@@ -49,7 +49,7 @@
 | 类别 | 位置 | 结论 |
 | --- | --- | --- |
 | Python runtime deps | `pyproject.toml` | 核心运行时依赖最小化（`numpy`） |
-| C++ compile-time deps | `CMakeLists.txt`, `src/compute/CMakeLists.txt` | PECJ/PyTorch 由构建开关控制（可 stub） |
+| C++ compile-time deps | `CMakeLists.txt` | PECJ/PyTorch 由构建开关控制（可 stub） |
 | Runtime imports | `src/plugins/`, `src/compute/` | 不引入 `ray`；模式分支显式，不再隐式回退 |
 
 ## 4) Phase 1 Checklist (Issue #18)
