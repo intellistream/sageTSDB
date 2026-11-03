@@ -253,7 +253,7 @@ if(TARGET test_srtfd_compute_engine)
 endif()
 
 if(TARGET test_pecj_plugin)
-    gtest_discover_tests(test_pecj_plugin)
+    gtest_discover_tests(test_pecj_plugin PROPERTIES TIMEOUT 30)
 endif()
 
 if(TARGET test_fault_detection_plugin)

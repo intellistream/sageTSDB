@@ -2,6 +2,7 @@
 
 #include "../core/time_series_data.h"
 #include "plugin_interface.h"
+#include <algorithm>
 #include <atomic>
 #include <condition_variable>
 #include <functional>
