@@ -207,7 +207,8 @@ jobs:
 
       - name: Generate lcov report
         run: |
-          LCOV_IGNORE_ERRORS="mismatch,empty,unused"
+          # gcov can report different end lines for GoogleTest-generated functions.
+          LCOV_IGNORE_ERRORS="mismatch,inconsistent,empty,unused"
           lcov --capture --directory build-coverage --output-file coverage.info \
             --ignore-errors "${LCOV_IGNORE_ERRORS}" \
             --rc geninfo_unexecuted_blocks=1
@@ -218,7 +219,7 @@ jobs:
             '*/_deps/*' \
             --output-file coverage.info.filtered \
             --ignore-errors "${LCOV_IGNORE_ERRORS}"
-          lcov --list coverage.info.filtered --ignore-errors empty,unused
+          lcov --list coverage.info.filtered --ignore-errors "${LCOV_IGNORE_ERRORS}"
 
       - name: Upload coverage artifact
         if: always()
