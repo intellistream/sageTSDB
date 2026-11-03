@@ -9,12 +9,12 @@ RED='\033[0;31m'
 NC='\033[0m'
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
 # Check for wheel files
 if [ ! -d "${PROJECT_ROOT}/dist" ] || [ -z "$(ls -A ${PROJECT_ROOT}/dist/*.whl 2>/dev/null)" ]; then
     echo -e "${RED}No wheel files found in dist/. Run build first:${NC}"
-    echo "  ./scripts/build_native_wheel.sh"
+    echo "  ./scripts/build/build_native_wheel.sh"
     exit 1
 fi
 
@@ -58,7 +58,7 @@ echo -e "\n${GREEN}✅ Upload complete!${NC}"
 
 if [ "$REPO" = "testpypi" ]; then
     echo -e "\n${YELLOW}Test installation with:${NC}"
-    echo "  pip install -i https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple isage-tsdb==0.1.5"
+    echo "  pip install -i https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple isage-tsdb"
 else
     echo -e "\n${YELLOW}Install with:${NC}"
     echo "  pip install --upgrade isage-tsdb"

@@ -10,8 +10,19 @@
 #include <sstream>
 #include <stdexcept>
 
+#ifdef SAGE_TSDB_SRTFD_TORCH
+#include <torch/script.h>
+#endif
+
 namespace sage_tsdb {
 namespace compute {
+
+struct SRTFDComputeEngine::TorchBackend {
+#ifdef SAGE_TSDB_SRTFD_TORCH
+    torch::jit::script::Module module;
+    std::mutex mutex;
+#endif
+};
 
 namespace {
 constexpr size_t MAX_LATENCY_SAMPLES = 1000;
@@ -72,6 +83,8 @@ SRTFDComputeEngine::SRTFDComputeEngine()
       initialized_(false),
       current_memory_usage_(0) {}
 
+SRTFDComputeEngine::~SRTFDComputeEngine() = default;
+
 bool SRTFDComputeEngine::initialize(const SRTFDConfig& config,
                                     TimeSeriesDB* db,
                                     core::ResourceHandle* resource_handle) {
@@ -87,11 +100,39 @@ bool SRTFDComputeEngine::initialize(const SRTFDConfig& config,
     resource_handle_ = resource_handle;
     backend_ = stringToSRTFDBackend(config_.backend);
 
+    if (config_.backend != "statistical" && config_.backend != "torchscript"
+        && config_.backend != "external") {
+        return false;
+    }
+
     if (!validateConfig() || !validateBackend()) {
         return false;
     }
     if (!db_->hasTable(config_.input_table)) {
         return false;
+    }
+    if (backend_ == SRTFDBackend::TorchScript) {
+#ifdef SAGE_TSDB_SRTFD_TORCH
+        try {
+            torch_backend_ = std::make_unique<TorchBackend>();
+            torch_backend_->module = torch::jit::load(config_.model_path, torch::kCPU);
+            torch_backend_->module.eval();
+            torch::NoGradGuard guard;
+            auto probe = torch::zeros({1, static_cast<int64_t>(config_.input_dim)});
+            auto output = torch_backend_->module.forward({probe}).toTensor();
+            if (output.dim() != 2 || output.size(0) != 1
+                || output.size(1) != static_cast<int64_t>(config_.num_classes)
+                || !torch::isfinite(output).all().item<bool>()) {
+                torch_backend_.reset();
+                return false;
+            }
+        } catch (const std::exception&) {
+            torch_backend_.reset();
+            return false;
+        }
+#else
+        return false;
+#endif
     }
     if (config_.write_results && !db_->hasTable(config_.result_table)) {
         db_->createTable(config_.result_table, TableType::JoinResult);
@@ -116,6 +157,11 @@ bool SRTFDComputeEngine::validateBackend() const {
     if (backend_ == SRTFDBackend::Statistical) {
         return true;
     }
+#ifdef SAGE_TSDB_SRTFD_TORCH
+    if (backend_ == SRTFDBackend::TorchScript) {
+        return !config_.model_path.empty();
+    }
+#endif
     return false;
 }
 
@@ -155,6 +201,11 @@ SRTFDStatus SRTFDComputeEngine::executeWindowDiagnosis(
         }
 
         double confidence_sum = 0.0;
+        std::vector<SRTFDDiagnosis> neural_results;
+        size_t neural_index = 0;
+        if (backend_ == SRTFDBackend::TorchScript) {
+            neural_results = runTorchBatch(input_data);
+        }
         for (size_t index = 0; index < input_data.size(); ++index) {
             auto features = input_data[index].as_vector();
             if (!validateFeatures(features)) {
@@ -162,7 +213,9 @@ SRTFDStatus SRTFDComputeEngine::executeWindowDiagnosis(
                 continue;
             }
 
-            auto diagnosis = diagnoseSample(input_data[index], features, index);
+            auto diagnosis = backend_ == SRTFDBackend::TorchScript
+                ? neural_results.at(neural_index++)
+                : diagnoseSample(input_data[index], features, index);
             if (config_.write_results && !writeResult(window_id, diagnosis)) {
                 status.error = "Failed to write SRTFD result";
                 updateMetrics(status);
@@ -199,7 +252,8 @@ bool SRTFDComputeEngine::validateFeatures(const std::vector<double>& features) c
     if (features.empty()) {
         return false;
     }
-    if (config_.strict_input_dim && features.size() != config_.input_dim) {
+    if ((config_.strict_input_dim || backend_ == SRTFDBackend::TorchScript)
+        && features.size() != config_.input_dim) {
         return false;
     }
     return std::all_of(features.begin(), features.end(), [](double value) {
@@ -215,10 +269,76 @@ SRTFDDiagnosis SRTFDComputeEngine::diagnoseSample(
         case SRTFDBackend::Statistical:
             return runStatisticalBackend(data, features, sample_index);
         case SRTFDBackend::TorchScript:
+            return runTorchBackend(data, features, sample_index);
         case SRTFDBackend::External:
         default:
             throw std::runtime_error("Configured SRTFD backend is not implemented");
     }
+}
+
+SRTFDDiagnosis SRTFDComputeEngine::runTorchBackend(
+    const TimeSeriesData& data, const std::vector<double>& features,
+    size_t sample_index) const {
+#ifdef SAGE_TSDB_SRTFD_TORCH
+    auto results = runTorchBatch({data});
+    auto result = results.at(0);
+    result.sample_index = sample_index;
+    return result;
+#else
+    throw std::runtime_error("Rebuild with SAGE_TSDB_ENABLE_SRTFD_TORCH=ON");
+#endif
+}
+
+std::vector<SRTFDDiagnosis> SRTFDComputeEngine::runTorchBatch(
+    const std::vector<TimeSeriesData>& data) const {
+    std::vector<SRTFDDiagnosis> results;
+#ifdef SAGE_TSDB_SRTFD_TORCH
+    if (!torch_backend_) {
+        throw std::runtime_error("TorchScript model is not loaded");
+    }
+    std::vector<float> features;
+    std::vector<size_t> indices;
+    for (size_t index = 0; index < data.size(); ++index) {
+        const auto values = data[index].as_vector();
+        if (!validateFeatures(values)) continue;
+        indices.push_back(index);
+        for (const auto value : values) features.push_back(static_cast<float>(value));
+    }
+    if (indices.empty()) return results;
+    std::lock_guard<std::mutex> lock(torch_backend_->mutex);
+    torch::NoGradGuard guard;
+    auto input = torch::from_blob(features.data(),
+        {static_cast<int64_t>(indices.size()), static_cast<int64_t>(config_.input_dim)},
+        torch::kFloat32);
+    auto logits = torch_backend_->module.forward({input}).toTensor();
+    if (logits.dim() != 2 || logits.size(0) != static_cast<int64_t>(indices.size())
+        || logits.size(1) != static_cast<int64_t>(config_.num_classes)
+        || !torch::isfinite(logits).all().item<bool>()) {
+        throw std::runtime_error("Invalid TorchScript classifier output");
+    }
+    auto probabilities = logits.softmax(1).to(torch::kCPU);
+    auto maximum = probabilities.max(1);
+    for (size_t row = 0; row < indices.size(); ++row) {
+    const auto index = indices[row];
+    SRTFDDiagnosis diagnosis;
+    diagnosis.timestamp = data[index].timestamp;
+    diagnosis.sample_index = index;
+    diagnosis.backend = "torchscript";
+    diagnosis.predicted_class = std::get<1>(maximum)[row].item<int>();
+    diagnosis.confidence = std::get<0>(maximum)[row].item<double>();
+    diagnosis.anomaly_score = 1.0 - probabilities[row][0].item<double>();
+    diagnosis.is_anomaly = diagnosis.predicted_class != 0;
+    const auto asset = data[index].tags.find("asset_id");
+    if (asset != data[index].tags.end()) {
+        diagnosis.asset_id = asset->second;
+    }
+    diagnosis.features = {{"normal_probability", 1.0 - diagnosis.anomaly_score}};
+    results.push_back(std::move(diagnosis));
+    }
+#else
+    throw std::runtime_error("Rebuild with SAGE_TSDB_ENABLE_SRTFD_TORCH=ON");
+#endif
+    return results;
 }
 
 SRTFDDiagnosis SRTFDComputeEngine::runStatisticalBackend(

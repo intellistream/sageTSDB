@@ -16,82 +16,8 @@
 #include <string>
 #include <vector>
 
-// Include the header with operator definitions
-#ifdef PECJ_MODE_INTEGRATED
+// Exercise the public operator contracts in every build configuration.
 #include "sage_tsdb/compute/pecj_compute_engine.h"
-#endif
-
-// Test without PECJ integration - just test the enum and helper functions
-namespace sage_tsdb {
-namespace compute {
-
-// Re-declare for testing if not in integrated mode
-#ifndef PECJ_MODE_INTEGRATED
-
-enum class PECJOperatorType {
-    IAWJ,
-    MeanAQP,
-    IMA,
-    MSWJ,
-    AI,
-    LinearSVI,
-    IAWJSel,
-    LazyIAWJSel,
-    SHJ,
-    PRJ,
-    PECJ
-};
-
-inline std::string operatorTypeToString(PECJOperatorType type) {
-    switch (type) {
-        case PECJOperatorType::IAWJ:        return "IAWJ";
-        case PECJOperatorType::MeanAQP:     return "MeanAQP";
-        case PECJOperatorType::IMA:         return "IMA";
-        case PECJOperatorType::MSWJ:        return "MSWJ";
-        case PECJOperatorType::AI:          return "AI";
-        case PECJOperatorType::LinearSVI:   return "LinearSVI";
-        case PECJOperatorType::IAWJSel:     return "IAWJSel";
-        case PECJOperatorType::LazyIAWJSel: return "LazyIAWJSel";
-        case PECJOperatorType::SHJ:         return "SHJ";
-        case PECJOperatorType::PRJ:         return "PRJ";
-        case PECJOperatorType::PECJ:        return "IMA";
-        default:                            return "IAWJ";
-    }
-}
-
-inline PECJOperatorType stringToOperatorType(const std::string& tag) {
-    if (tag == "IAWJ")        return PECJOperatorType::IAWJ;
-    if (tag == "MeanAQP")     return PECJOperatorType::MeanAQP;
-    if (tag == "IMA")         return PECJOperatorType::IMA;
-    if (tag == "MSWJ")        return PECJOperatorType::MSWJ;
-    if (tag == "AI")          return PECJOperatorType::AI;
-    if (tag == "LinearSVI")   return PECJOperatorType::LinearSVI;
-    if (tag == "IAWJSel")     return PECJOperatorType::IAWJSel;
-    if (tag == "LazyIAWJSel") return PECJOperatorType::LazyIAWJSel;
-    if (tag == "SHJ")         return PECJOperatorType::SHJ;
-    if (tag == "PRJ")         return PECJOperatorType::PRJ;
-    if (tag == "PECJ" || tag == "PEC") return PECJOperatorType::PECJ;
-    return PECJOperatorType::IAWJ;
-}
-
-inline bool operatorSupportsAQP(PECJOperatorType type) {
-    switch (type) {
-        case PECJOperatorType::MeanAQP:
-        case PECJOperatorType::IMA:
-        case PECJOperatorType::MSWJ:
-        case PECJOperatorType::IAWJSel:
-        case PECJOperatorType::LazyIAWJSel:
-        case PECJOperatorType::PECJ:
-            return true;
-        default:
-            return false;
-    }
-}
-
-#endif // !PECJ_MODE_INTEGRATED
-
-} // namespace compute
-} // namespace sage_tsdb
 
 using namespace sage_tsdb::compute;
 
@@ -123,26 +49,25 @@ protected:
             "LinearSVI", "IAWJSel", "LazyIAWJSel", "SHJ", "PRJ", "PECJ"
         };
         
-        // Operators that support AQP
+        // Operators that support approximate result estimation.
         aqp_operators_ = {
             PECJOperatorType::MeanAQP,
             PECJOperatorType::IMA,
             PECJOperatorType::MSWJ,
+            PECJOperatorType::AI,
+            PECJOperatorType::LinearSVI,
             PECJOperatorType::IAWJSel,
             PECJOperatorType::LazyIAWJSel,
             PECJOperatorType::PECJ
         };
-        
-        // Operators that do NOT support AQP
+
         non_aqp_operators_ = {
             PECJOperatorType::IAWJ,
-            PECJOperatorType::AI,
-            PECJOperatorType::LinearSVI,
             PECJOperatorType::SHJ,
             PECJOperatorType::PRJ
         };
     }
-    
+
     std::vector<PECJOperatorType> all_operator_types_;
     std::vector<std::string> all_operator_tags_;
     std::vector<PECJOperatorType> aqp_operators_;
@@ -254,8 +179,8 @@ TEST_F(PECJOperatorsTest, AQPOperatorCount) {
             aqp_count++;
         }
     }
-    // Should be 6: MeanAQP, IMA, MSWJ, IAWJSel, LazyIAWJSel, PECJ
-    EXPECT_EQ(aqp_count, 6);
+    // MeanAQP, IMA, MSWJ, AI, LinearSVI, IAWJSel, LazyIAWJSel, PECJ.
+    EXPECT_EQ(aqp_count, 8);
 }
 
 // ============================================================================

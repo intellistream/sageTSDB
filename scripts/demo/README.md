@@ -2,6 +2,12 @@
 
 本目录包含 sageTSDB 示例程序的演示运行脚本。
 
+课题演示入口为 `bash scripts/demo/run_task_demos.sh`，无需重新编译 PECJ。
+四个场景和组件路径配置见 [task_demos/README.md](../../examples/task_demos/README.md)。
+
+真实后验优化与神经网络训练入口为 `PYTHON=/path/to/torch-python bash scripts/demo/run_research_demos.sh`。
+模型导出、原生推断和独立组件打包见 [RESEARCH_ENGINE.md](../../docs/compute/RESEARCH_ENGINE.md)。
+
 ## 📚 脚本列表
 
 ### 1. run_pecj_srtfd_showcase.sh

@@ -278,6 +278,6 @@ std::cout << "Allocated threads: "
 
 ## 参考
 
-- [设计文档](../docs/DESIGN_DOC_SAGETSDB_PECJ.md)
-- [单元测试](../tests/test_resource_manager.cpp)
-- [API 文档](../include/sage_tsdb/core/resource_manager.h)
+- [设计文档](../DESIGN_DOC_SAGETSDB_PECJ.md)
+- [单元测试](../../tests/test_resource_manager.cpp)
+- [API 文档](../../include/sage_tsdb/core/resource_manager.h)

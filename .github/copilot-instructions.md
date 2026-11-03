@@ -2,7 +2,7 @@
 
 ## Overview
 
-**sageTSDB** 是高性能时序数据库，C++20 编写，支持乱序数据处理、窗口计算和 PECJ 算法深度融合。作为 SAGE 项目的子模块，位于 `packages/sage-middleware/src/sage/middleware/components/sage_tsdb/`。
+**sageTSDB** 是高性能时序数据库，C++20 编写，支持乱序数据处理、窗口计算和 PECJ 算法深度融合。作为独立仓库开发与发布，可由 SAGE 项目集成。
 
 ## Architecture (Database-Centric Design)
 
@@ -32,10 +32,10 @@ examples/                  # Demo 程序 (persistence, PECJ 集成等)
 
 ```bash
 # 基本构建 (独立模式)
-./scripts/build.sh
+./scripts/build/build.sh
 
 # 构建并测试
-./scripts/build.sh --test
+./scripts/build/build.sh --test
 
 # PECJ 深度融合模式构建
 cmake -B build -S . \
@@ -116,7 +116,7 @@ scheduler.start();
 | `include/sage_tsdb/compute/pecj_compute_engine.h` | PECJ 无状态计算引擎 |
 | `include/sage_tsdb/core/resource_manager.h` | 资源统一管理 |
 | `include/sage_tsdb/plugins/plugin_interface.h` | 插件接口定义 |
-| `examples/deep_integration_demo.cpp` | 深度融合架构演示 |
+| `examples/integration/deep_integration_demo.cpp` | 深度融合架构演示 |
 
 ## Testing
 
@@ -156,9 +156,9 @@ source setup_env.sh  # 配置 LD_LIBRARY_PATH
 ## Documentation
 
 - 架构设计: `docs/DESIGN_DOC_SAGETSDB_PECJ.md`
-- 深度融合总结: `docs/PECJ_DEEP_INTEGRATION_SUMMARY.md`
-- 资源管理: `docs/RESOURCE_MANAGER_GUIDE.md`
-- LSM-Tree 实现: `docs/LSM_TREE_IMPLEMENTATION.md`
+- 深度融合总结: `docs/compute/README.md`
+- 资源管理: `docs/core/RESOURCE_MANAGER_GUIDE.md`
+- LSM-Tree 实现: `docs/core/LSM_TREE_IMPLEMENTATION.md`
 
 ## Polyrepo coordination (mandatory)
 

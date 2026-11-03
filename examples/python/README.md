@@ -216,17 +216,16 @@ window_config = {
 # Ensure SAGE is in Python path
 export PYTHONPATH=/home/shuhao/SAGE:$PYTHONPATH
 
-# Or install SAGE in development mode
-cd /home/shuhao/SAGE
-pip install -e .
+# Install the released SAGE package if the example requires it
+pip install isage
 ```
 
 ### Issue: C++ library not found
 
 ```bash
 # Build sageTSDB C++ core
-cd packages/sage-middleware/src/sage/middleware/components/sage_tsdb/sageTSDB
-./build.sh
+cd /path/to/sageTSDB
+bash scripts/build/build.sh --python
 ```
 
 ### Issue: Out of memory
@@ -246,9 +245,9 @@ After exploring these examples:
 
 ## Related Documentation
 
-- [SAGE TSDB README](../../../packages/sage-middleware/src/sage/middleware/components/sage_tsdb/README.md)
-- [Submodule Setup Guide](../../../packages/sage-middleware/src/sage/middleware/components/sage_tsdb/SUBMODULE_SETUP.md)
-- [sage-developer Guide](../../../DEVELOPER.md)
+- [SAGE TSDB README](../../README.md)
+- [Quick Start](../../QUICKSTART.md)
+- [Development Scripts](../../scripts/README.md)
 
 ## Support
 

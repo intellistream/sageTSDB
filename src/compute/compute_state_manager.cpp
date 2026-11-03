@@ -3,6 +3,7 @@
 #include <cstring>
 #include <stdexcept>
 #include <chrono>
+#include <set>
 
 namespace sage_tsdb {
 namespace compute {

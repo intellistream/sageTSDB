@@ -2,6 +2,12 @@
 
 本目录包含 sageTSDB 的各种示例程序，展示核心功能和 PECJ 集成能力。
 
+对照 `docs/TASK.md` 的四个可运行课题示例见 [task_demos/README.md](task_demos/README.md)：
+迟到窗口 Join、工况漂移检测、增量诊断、故障提前预警。可直接配合现有 0.2.0 PECJ 包运行。
+
+直接复用 PECJ 原始模型与 SRTFD 原始网络的训练、导出和运行说明见
+[研究引擎说明](../docs/compute/RESEARCH_ENGINE.md)，入口为 `scripts/demo/run_research_demos.sh`。
+
 > 📖 **详细文档**: 查看 [docs/examples/](../docs/examples/) 获取完整的使用指南和配置说明。
 
 ## 📁 目录结构

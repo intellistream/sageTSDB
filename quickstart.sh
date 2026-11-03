@@ -1,5 +1,5 @@
 #!/bin/bash
-# SageVDB Quickstart Script
+# sageTSDB Quickstart Script
 # Sets up development environment and git hooks
 
 set -e
@@ -21,7 +21,7 @@ echo -e "${BOLD}${BLUE} _\\ \/ _ \/ _ \/ -_)   / /    / / / / / __  |${NC}"
 echo -e "${BOLD}${BLUE}/___/\\___/\\_, /\\__/   /_/    /_/ /_/ /____/ ${NC}"
 echo -e "${BOLD}${BLUE}         /___/                               ${NC}"
 echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-echo -e "${GREEN}${BOLD}SageVDB Quickstart Setup${NC}"
+echo -e "${GREEN}${BOLD}sageTSDB Quickstart Setup${NC}"
 echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 echo ""
 
@@ -131,13 +131,13 @@ read -r BUILD_NOW
 if [[ "$BUILD_NOW" =~ ^[Yy]$ ]]; then
     echo ""
     echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-    echo -e "${GREEN}🔨 Building SageVDB...${NC}"
+    echo -e "${GREEN}🔨 Building sageTSDB...${NC}"
     echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 
-    if [ -f "$PROJECT_ROOT/build.sh" ]; then
+    if [ -f "$PROJECT_ROOT/scripts/build/build.sh" ]; then
         echo -e "${YELLOW}Using build.sh script...${NC}"
         cd "$PROJECT_ROOT"
-        bash build.sh
+        bash scripts/build/build.sh
     else
         echo -e "${YELLOW}Configuring with CMake...${NC}"
         cmake -B "$PROJECT_ROOT/build" -S "$PROJECT_ROOT" \
@@ -151,7 +151,7 @@ if [[ "$BUILD_NOW" =~ ^[Yy]$ ]]; then
     fi
 else
     echo -e "${YELLOW}Skipping build. To build later, run:${NC}"
-    echo -e "  ${CYAN}./build.sh${NC}"
+    echo -e "  ${CYAN}./scripts/build/build.sh${NC}"
     echo -e "${YELLOW}Or manually:${NC}"
     echo -e "  ${CYAN}cmake -B build -S . -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTS=ON${NC}"
     echo -e "  ${CYAN}cmake --build build -j\$(nproc)${NC}"
@@ -196,7 +196,7 @@ echo -e "  ${GREEN}•${NC} pre-commit: Checks code quality before commits"
 echo -e "  ${GREEN}•${NC} pre-push: Manages version updates and PyPI publishing"
 echo ""
 echo -e "${BLUE}${BOLD}Useful Commands:${NC}"
-echo -e "  ${CYAN}./build.sh${NC}                    - Quick rebuild"
+echo -e "  ${CYAN}./scripts/build/build.sh${NC}                    - Quick rebuild"
 echo -e "  ${CYAN}sage-pypi-publisher build${NC}     - Build distribution packages"
 echo -e "  ${CYAN}sage-pypi-publisher publish${NC}   - Build and publish to PyPI"
 echo ""

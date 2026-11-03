@@ -2,6 +2,9 @@
 
 本目录包含 sageTSDB 各种示例程序的详细文档和使用指南。
 
+对照课题要求的新示例见 [TASK_DEMOS.md](TASK_DEMOS.md)，包含四个可运行 Demo、
+当前交付范围、评测指标，以及 PDA、VI、双模模型和 CXL 尚待实现与验证的内容。
+
 ## 📖 文档索引
 
 ### PECJ 集成示例
@@ -21,7 +24,7 @@
 - 测试高乱序数据处理能力
 - 大规模流式 Join 性能验证
 
-**相关代码**: `examples/deep_integration_demo.cpp`
+**相关代码**: `examples/integration/deep_integration_demo.cpp`
 
 ---
 
@@ -40,9 +43,9 @@
 - 乱序处理能力验证
 - 水印机制测试
 
-**相关代码**: `examples/deep_integration_demo.cpp`（通过参数启用乱序模式）
+**相关代码**: `examples/integration/deep_integration_demo.cpp`（通过参数启用乱序模式）
 
-**测试脚本**: `scripts/run_high_disorder_demo.sh`
+**测试脚本**: `scripts/demo/run_disorder_demo.sh`
 
 ---
 
@@ -69,7 +72,7 @@
 ### 性能评估
 如果你需要进行性能评估和比较：
 1. 阅读 [High Disorder Demo 文档](./README_HIGH_DISORDER_DEMO.md)
-2. 使用 `scripts/run_high_disorder_demo.sh` 运行预定义测试场景
+2. 使用 `scripts/demo/run_disorder_demo.sh` 运行预定义测试场景
 3. 使用 `performance_benchmark` 进行多维度性能对比
 
 ---
@@ -77,10 +80,10 @@
 ## 📚 相关文档
 
 - [sageTSDB 设计文档](../DESIGN_DOC_SAGETSDB_PECJ.md)
-- [PECJ 计算引擎实现](../PECJ_COMPUTE_ENGINE_IMPLEMENTATION.md)
-- [资源管理器指南](../RESOURCE_MANAGER_GUIDE.md)
-- [数据持久化](../PERSISTENCE.md)
-- [表设计实现](../TABLE_DESIGN_IMPLEMENTATION.md)
+- [PECJ 计算引擎实现](../compute/PECJ_COMPUTE_ENGINE_IMPLEMENTATION.md)
+- [资源管理器指南](../core/RESOURCE_MANAGER_GUIDE.md)
+- [数据持久化](../core/PERSISTENCE.md)
+- [表设计实现](../core/TABLE_DESIGN_IMPLEMENTATION.md)
 
 ---
 

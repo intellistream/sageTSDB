@@ -124,6 +124,9 @@ target_link_libraries(test_pecj_operators
     GTest::gtest_main
     test_utils
 )
+# Operator metadata lives in the integrated public header and needs no engine linkage.
+# Compile these contracts against the real declarations even in standalone builds.
+target_compile_definitions(test_pecj_operators PRIVATE PECJ_MODE_INTEGRATED=1)
 # Add compute library if available (for full integration tests)
 if(TARGET sage_tsdb_compute AND SAGE_TSDB_ENABLE_PECJ AND PECJ_MODE STREQUAL "INTEGRATED")
     target_link_libraries(test_pecj_operators PRIVATE sage_tsdb_compute)

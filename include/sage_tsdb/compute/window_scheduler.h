@@ -106,7 +106,7 @@ struct WindowSchedulerConfig {
     
     // Performance tuning
     size_t max_pending_windows = 10;      ///< Maximum windows in queue
-    size_t max_concurrent_windows = 4;    ///< Parallel window computation
+    size_t max_concurrent_windows = 4;    ///< Maximum in-flight window tasks
     bool enable_adaptive_scheduling = true; ///< Adjust based on workload
     
     // Table names to watch
@@ -344,7 +344,7 @@ private:
     /**
      * @brief Execute window computation asynchronously
      */
-    void executeWindowAsync(WindowInfo& window);
+    bool executeWindowAsync(WindowInfo& window);
     
     /**
      * @brief Update window statistics

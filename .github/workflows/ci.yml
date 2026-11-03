@@ -158,6 +158,9 @@ jobs:
           PYTHONPATH: ${{ github.workspace }}
         run: python -m pytest tests -q
 
+      - name: Run task demo contract tests
+        run: python -m unittest discover -s examples/task_demos -p 'test_*.py' -v
+
       - name: Upload pytest coverage HTML
         if: always()
         uses: actions/upload-artifact@v4

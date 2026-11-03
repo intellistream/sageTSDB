@@ -4,6 +4,7 @@ outputs/
 # 忽略临时生成的结果文件（如果在根目录运行）
 *.json
 *.txt
+!CMakeLists.txt
 *.png
 
 # 但保留配置文件

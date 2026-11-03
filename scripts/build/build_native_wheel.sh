@@ -10,16 +10,13 @@ RED='\033[0;31m'
 NC='\033[0m'
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
 echo -e "${GREEN}Building sageTSDB wheel (native)...${NC}"
 
 cd "${PROJECT_ROOT}"
 
-# Clean previous builds
-echo -e "${YELLOW}Cleaning previous builds...${NC}"
-rm -rf build dist *.egg-info
-rm -rf sage_tsdb/*.so sage_tsdb/*.pyc sage_tsdb/__pycache__
+# Keep component packages and development builds in place.
 
 # Build wheel
 echo -e "${YELLOW}Building wheel with scikit-build-core...${NC}"

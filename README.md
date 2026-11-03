@@ -4,7 +4,7 @@
 
 [![PyPI version](https://badge.fury.io/py/isage-tsdb.svg)](https://pypi.org/project/isage-tsdb/)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 
 sageTSDB is a high-performance time series database designed for streaming data processing with support for out-of-order data, window-based operations, and pluggable algorithms.
 
@@ -31,56 +31,28 @@ pip install isage-tsdb
 
 ```
 sageTSDB/
-├── include/sage_tsdb/          # Public header files
-│   ├── core/                   # Core time series database
-│   ├── algorithms/             # Stream processing algorithms
-│   ├── plugins/                # Plugin system (PECJ, fault detection)
-│   └── utils/                  # Utilities and helpers
-│
-├── src/                        # Implementation files
-│   ├── core/                   # Core implementation
-│   ├── algorithms/             # Algorithm implementations
-│   ├── plugins/                # Plugin implementations
-│   └── utils/                  # Utility implementations
-│
-├── tests/                      # 🔬 Unit tests (GoogleTest)
-│   ├── test_*.cpp              # All test files with detailed comments
-│   └── CMakeLists.txt          # Test build configuration
-│
-├── examples/                   # 📚 Demo programs
-│   ├── persistence_example.cpp # Data persistence demo
-│   ├── plugin_usage_example.cpp# Plugin system demo
-│   ├── integrated_demo.cpp     # PECJ integration demo
-│   ├── pecj_replay_demo.cpp    # PECJ replay demo
-│   ├── performance_benchmark.cpp # Performance testing
-│   └── README.md               # Examples documentation
-│
-├── docs/                       # 📖 Documentation
-│   ├── DESIGN_DOC_SAGETSDB_PECJ.md  # Architecture design
-│   ├── PERSISTENCE.md               # Persistence guide
-│   ├── LSM_TREE_IMPLEMENTATION.md   # LSM Tree details
-│   ├── RESOURCE_MANAGER_GUIDE.md    # Resource management
-│   └── README.md                     # Documentation index
-│
-├── scripts/                    # 🛠️ Build and utility scripts
-│   ├── build.sh                # Main build script
-│   ├── build_plugins.sh        # Plugin build script
-│   ├── build_and_test.sh       # Build and test examples
-│   ├── run_demo.sh             # Demo launcher
-│   ├── test_lsm_tree.sh        # LSM Tree testing
-│   └── README.md               # Scripts documentation
-│
-├── python/                     # Python bindings (pybind11)
-├── cmake/                      # CMake modules
-└── CMakeLists.txt              # Root build configuration
+├── include/sage_tsdb/   # Public C++ headers and C ABI
+├── src/                # core/, compute/, algorithms/, plugins/, utils/, c_api/
+├── sage_tsdb/          # Python package, bindings and intelligence adapters
+├── tools/              # PECJ and SRTFD command-line programs
+├── cmake/              # Package exports and delivery build settings
+├── tests/              # C++ and Python regression tests
+├── examples/           # basic/, integration/, benchmarks/, python/, task_demos/
+├── docs/               # Architecture, interfaces, delivery and research requirements
+├── scripts/            # build/, demo/, test/, release/
+├── docker/             # manylinux build image
+├── hooks/              # Optional development Git hooks
+└── CMakeLists.txt      # Main C++ build and install entrypoint
 ```
 
-### Directory Organization
-
-- **tests/**: All test files consolidated here (removed old `test/` folder)
-- **examples/**: Demo programs only (moved test programs to `tests/`)
-- **docs/**: All documentation (removed duplicate/outdated docs)
-- **scripts/**: All build scripts in one place (removed outdated scripts)
+- Start with [QUICKSTART.md](QUICKSTART.md) or the [documentation index](docs/README.md).
+- Use [scripts/build/build.sh](scripts/build/build.sh) for C++ builds and tests.
+- See [component delivery](docs/compute/PECJ_COMPUTE_COMPONENT_DELIVERY.md),
+  [upstream network adapters](docs/compute/RESEARCH_ENGINE.md), and
+  [task demos](examples/task_demos/README.md) for standalone delivery workflows.
+- Generated builds belong in `build/`, packages in `dist/`, and demo results in
+  `examples/outputs/`. These are local artifacts; edit source files outside `dist/`
+  and rebuild packages to update a delivery.
 
 ## 📦 Quick Start (Python)
 
@@ -311,14 +283,14 @@ git submodule update --init --recursive
 
 ## 📚 Documentation
 
-- [API Reference](docs/API.md)
-- [Algorithm Guide](docs/ALGORITHMS.md)
-- [Performance Tuning](docs/PERFORMANCE.md)
-- [Python Bindings](docs/PYTHON_BINDINGS.md)
+- [Architecture and interfaces](docs/DESIGN_DOC_SAGETSDB_PECJ.md)
+- [Algorithm Guide](docs/algorithms/README.md)
+- [Performance Benchmarks](docs/compute/PECJ_BENCHMARK_README.md)
+- [Python Examples](examples/python/README.md)
 
 ## 🤝 Contributing
 
-Contributions are welcome! Please read our [Contributing Guide](CONTRIBUTING.md) for details.
+Contributions are welcome. Include a clear description and relevant test results in your pull request.
 
 ## 📄 License
 
@@ -327,7 +299,7 @@ This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENS
 ## 🔗 Links
 
 - [SAGE Project](https://github.com/intellistream/SAGE)
-- [Documentation](https://sage-docs.example.com)
+- [Documentation](docs/README.md)
 - [Issue Tracker](https://github.com/intellistream/sageTSDB/issues)
 
 ## 📮 Contact

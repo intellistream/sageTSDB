@@ -45,7 +45,7 @@ WindowScheduler::WindowScheduler(const WindowSchedulerConfig& config,
 }
 
 WindowScheduler::~WindowScheduler() {
-    stop(false);  // Don't wait for completion
+    stop(true);
 }
 
 // ========== Lifecycle Management ==========
@@ -85,8 +85,8 @@ void WindowScheduler::stop(bool wait_completion) {
     if (wait_completion) {
         // Wait for all active windows to complete
         std::unique_lock<std::mutex> lock(windows_mutex_);
-        // Simple wait - in production, add timeout
-        while (getActiveWindowCount() > 0) {
+        while (std::any_of(windows_.begin(), windows_.end(),
+                           [](const auto& entry) { return entry.second.is_computing; })) {
             lock.unlock();
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
             lock.lock();
@@ -279,6 +279,7 @@ void WindowScheduler::schedulerLoop() {
     while (!stop_requested_.load()) {
         try {
             std::unique_lock<std::mutex> lock(windows_mutex_);
+            std::vector<WindowInfo> submission_failures;
             
             // Wait for pending windows or timeout
             windows_cv_.wait_for(lock, 
@@ -292,8 +293,13 @@ void WindowScheduler::schedulerLoop() {
             }
             
             // Process pending windows
-            while (!pending_windows_.empty() && 
-                   getActiveWindowCount() < config_.max_concurrent_windows) {
+            auto activeWindowCountLocked = [this]() {
+                return static_cast<size_t>(std::count_if(
+                    windows_.begin(), windows_.end(),
+                    [](const auto& entry) { return entry.second.is_computing; }));
+            };
+            while (!pending_windows_.empty() &&
+                   activeWindowCountLocked() < config_.max_concurrent_windows) {
                 
                 uint64_t window_id = pending_windows_.top();
                 pending_windows_.pop();
@@ -304,10 +310,34 @@ void WindowScheduler::schedulerLoop() {
                 }
                 
                 // Execute window asynchronously
-                executeWindowAsync(it->second);
+                if (!executeWindowAsync(it->second)) {
+                    submission_failures.push_back(it->second);
+                }
             }
             
             lock.unlock();
+
+            for (const auto& window : submission_failures) {
+                ComputeStatus status;
+                status.window_id = window.window_id;
+                status.error = "ResourceHandle rejected window task";
+                {
+                    std::lock_guard<std::mutex> metrics_lock(metrics_mutex_);
+                    metrics_.total_windows_failed++;
+                }
+                std::vector<WindowCallback> callbacks;
+                {
+                    std::lock_guard<std::mutex> callbacks_lock(callbacks_mutex_);
+                    callbacks = failure_callbacks_;
+                }
+                for (auto& callback : callbacks) {
+                    try {
+                        callback(window, status);
+                    } catch (const std::exception& e) {
+                        std::cerr << "WindowScheduler: callback error: " << e.what() << std::endl;
+                    }
+                }
+            }
             
             // Periodic maintenance
             cleanupOldWindows();
@@ -422,13 +452,13 @@ uint64_t WindowScheduler::getWindowIdForTimestamp(int64_t timestamp) {
     return window_id;
 }
 
-void WindowScheduler::executeWindowAsync(WindowInfo& window) {
+bool WindowScheduler::executeWindowAsync(WindowInfo& window) {
     window.is_computing = true;
     window.triggered_at_us = getCurrentTimeUs();
     
     // Submit to resource handle (asynchronous execution)
     if (resource_handle_) {
-        resource_handle_->submitTask([this, window_id = window.window_id]() {
+        const bool submitted = resource_handle_->submitTask([this, window_id = window.window_id]() {
             WindowInfo window_copy;
             
             {
@@ -455,7 +485,6 @@ void WindowScheduler::executeWindowAsync(WindowInfo& window) {
                 std::lock_guard<std::mutex> lock(windows_mutex_);
                 auto it = windows_.find(window_id);
                 if (it != windows_.end()) {
-                    it->second.is_computing = false;
                     it->second.is_completed = true;
                     it->second.completed_at_us = end_time;
                     window_copy = it->second;  // Get updated copy
@@ -478,28 +507,43 @@ void WindowScheduler::executeWindowAsync(WindowInfo& window) {
             }
             
             // Invoke callbacks
+            std::vector<WindowCallback> callbacks;
             {
                 std::lock_guard<std::mutex> lock(callbacks_mutex_);
                 if (status.success) {
-                    for (auto& callback : completion_callbacks_) {
-                        try {
-                            callback(window_copy, status);
-                        } catch (const std::exception& e) {
-                            std::cerr << "WindowScheduler: callback error: " << e.what() << std::endl;
-                        }
-                    }
+                    callbacks = completion_callbacks_;
                 } else {
-                    for (auto& callback : failure_callbacks_) {
-                        try {
-                            callback(window_copy, status);
-                        } catch (const std::exception& e) {
-                            std::cerr << "WindowScheduler: callback error: " << e.what() << std::endl;
-                        }
-                    }
+                    callbacks = failure_callbacks_;
+                }
+            }
+            for (auto& callback : callbacks) {
+                try {
+                    callback(window_copy, status);
+                } catch (const std::exception& e) {
+                    std::cerr << "WindowScheduler: callback error: " << e.what() << std::endl;
+                }
+            }
+
+            // Keep the window active until every use of the scheduler from this
+            // task is complete, so stop(true) also protects callback lifetime.
+            {
+                std::lock_guard<std::mutex> lock(windows_mutex_);
+                auto it = windows_.find(window_id);
+                if (it != windows_.end()) {
+                    it->second.is_computing = false;
                 }
             }
         });
+        if (!submitted) {
+            window.is_computing = false;
+            window.is_completed = true;
+            window.completed_at_us = getCurrentTimeUs();
+            return false;
+        }
+        return true;
     }
+    window.is_computing = false;
+    return false;
 }
 
 void WindowScheduler::updateWindowStats(uint64_t window_id, 
@@ -555,7 +599,17 @@ void WindowScheduler::cleanupOldWindows() {
 
 void WindowScheduler::updateMetrics() {
     int64_t current_time = getCurrentTimeUs();
-    
+
+    size_t pending_windows = 0;
+    size_t active_windows = 0;
+    {
+        std::lock_guard<std::mutex> windows_lock(windows_mutex_);
+        pending_windows = pending_windows_.size();
+        active_windows = static_cast<size_t>(std::count_if(
+            windows_.begin(), windows_.end(),
+            [](const auto& entry) { return entry.second.is_computing; }));
+    }
+
     std::lock_guard<std::mutex> lock(metrics_mutex_);
     
     // Update only if enough time has passed
@@ -582,8 +636,8 @@ void WindowScheduler::updateMetrics() {
     }
     
     // Update current state
-    metrics_.pending_windows = pending_windows_.size();
-    metrics_.active_windows = getActiveWindowCount();
+    metrics_.pending_windows = pending_windows;
+    metrics_.active_windows = active_windows;
     
     metrics_last_update_us_ = current_time;
 }

@@ -1,51 +1,20 @@
-# 计算引擎文档
+# 计算引擎
 
-本目录包含 sageTSDB 计算引擎相关的文档，覆盖 PECJ (Parallel Event Correlation Join) 集成和 SRTFD 无状态诊断算子。
+计算层的公共头文件位于 `include/sage_tsdb/compute/`，实现位于 `src/compute/`，
+由根 `CMakeLists.txt` 构建。
 
-## 文档列表
-
-### PECJ 集成文档
-
-1. **[PECJ_COMPUTE_ENGINE_IMPLEMENTATION.md](./PECJ_COMPUTE_ENGINE_IMPLEMENTATION.md)**
-   - PECJComputeEngine 核心实现
-   - 配置说明和使用指南
-   - 性能优化建议
-   - 故障处理方法
-
-2. **[PECJ_OPERATORS_INTEGRATION.md](./PECJ_OPERATORS_INTEGRATION.md)**
-   - 支持的 PECJ 算子列表（IAWJ, MeanAQP, IMA, MSWJ 等）
-   - 各算子的特性和使用场景
-   - 算子配置参数说明
-
-3. **[PECJ_BENCHMARK_README.md](./PECJ_BENCHMARK_README.md)**
-   - 融合模式 vs 插件模式性能对比
-   - 基准测试指标说明
-   - 编译和运行指南
-
-### SRTFD 集成文档
-
-4. **[SRTFD_STATELESS_OPERATOR_DESIGN.md](./SRTFD_STATELESS_OPERATOR_DESIGN.md)**
-   - SRTFD 无状态算子接入设计
-   - 与 PECJ deep integration 的架构映射
-   - 当前实现状态、表契约和验收准则
-
-## 相关代码
-
-| 路径 | 说明 |
+| 文档 | 用途 |
 | --- | --- |
-| `src/compute/pecj_compute_engine.cpp` | PECJ 计算引擎 |
-| `src/compute/srtfd_compute_engine.cpp` | SRTFD 无状态诊断引擎 |
-| `src/compute/window_scheduler.cpp` | 窗口调度器 |
-| `src/compute/compute_state_manager.cpp` | 计算状态管理 |
+| [实现与使用](PECJ_COMPUTE_ENGINE_IMPLEMENTATION.md) | 源码职责、构建、窗口调用与诊断 |
+| [计算层接口](PECJ_COMPUTE_LAYER_INTERFACE.md) | C++ 接口和调用契约 |
+| [C API](PECJ_C_API.md) | C ABI v1、生命周期和二进制兼容边界 |
+| [算子集成](PECJ_OPERATORS_INTEGRATION.md) | IAWJ、IMA、MSWJ、AI 等算子 |
+| [基准测试](PECJ_BENCHMARK_README.md) | 融合模式与插件模式对比 |
+| [组件构建与交付](PECJ_COMPUTE_COMPONENT_DELIVERY.md) | 构建、安装、运行库与交付验证 |
+| [组件随包说明](PECJ_COMPUTE_COMPONENT_README.md) | 安装包根目录 README 模板 |
+| [原网络接入](RESEARCH_ENGINE.md) | PECJ linearVAE 与 SRTFD GCFAggMVC、训练和导出 |
+| [SRTFD 算子设计](SRTFD_STATELESS_OPERATOR_DESIGN.md) | 表契约、统计与神经诊断边界 |
 
-- 头文件：`include/sage_tsdb/compute/`
-
-- 示例程序：`examples/`
-  - `pecj_integrated_vs_plugin_benchmark.cpp` - 性能对比
-  - `integrated_demo.cpp` - 深度融合示例
-  - `pecj_replay_demo.cpp` - 回放示例
-
-## 快速开始
-
-详细的架构设计和集成方案请参考主文档：
-- [DESIGN_DOC_SAGETSDB_PECJ.md](../DESIGN_DOC_SAGETSDB_PECJ.md)
+C/C++ 独立消费者位于 `examples/c_component_consumer/` 和
+`examples/component_consumer/`。课题基线示例位于 `examples/task_demos/`，
+范围及验收缺口见 [课题示例对照](../examples/TASK_DEMOS.md)。
